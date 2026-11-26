@@ -1,0 +1,22 @@
+{
+  "name": "agenda-prazos-controladoria",
+  "version": "0.1.0",
+  "description": "Agenda web de prazos para controladoria jurídica (Google Apps Script + Google Planilhas + modo demonstração local)",
+  "private": true,
+  "scripts": {
+    "demo": "node local-demo/server.js",
+    "start": "node local-demo/server.js",
+    "test": "node tests/run-tests.js",
+    "clasp:login": "npx @google/clasp login",
+    "clasp:push": "npx @google/clasp push",
+    "clasp:pull": "npx @google/clasp pull",
+    "clasp:open": "npx @google/clasp open",
+    "clasp:deploy": "npx @google/clasp deploy --description \"Publicação Controladoria\""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@google/clasp": "^2.4.2"
+  }
+}

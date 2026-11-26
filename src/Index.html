@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Agenda de Prazos — Controladoria</title>
+  <?!= include('Styles'); ?>
+</head>
+<body>
+  <!-- Banner visível apenas no modo de demonstração local -->
+  <div id="demoBanner" class="demo-banner hidden" role="status" aria-live="polite">
+    <div class="demo-banner-info">
+      <span class="demo-pill">Modo Demonstração Local</span>
+      <span>Dados fictícios de direito bancário em memória — nenhuma planilha real do escritório está conectada.</span>
+    </div>
+    <div class="demo-controls">
+      <label for="demoProfileSelect" style="font-weight:600;">Perfil simulado:</label>
+      <select id="demoProfileSelect" title="Alternar permissão simulada">
+        <option value="EDITOR">Editor (Controladoria)</option>
+        <option value="VIEWER">Somente leitura (Consulta)</option>
+      </select>
+      <button type="button" id="btnDemoReorder" title="Simular reordenação das linhas na planilha">Reordenar planilha</button>
+      <button type="button" id="btnDemoSimulateColleague" title="Simular alteração de um colega no 1º registro">Simular edição de colega</button>
+      <button type="button" id="btnDemoReset" title="Restaurar dados fictícios iniciais">Resetar demo</button>
+    </div>
+  </div>
+
+  <!-- Cabeçalho Principal -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <h1>Agenda de Prazos — Controladoria</h1>
+      <div class="topbar-meta">
+        <span id="metaSheetInfo">Carregando planilha...</span>
+        <span id="metaTimezoneInfo">Fuso: America/Sao_Paulo</span>
+        <span id="metaSyncInfo"></span>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="userAccessBadge" class="access-badge viewer">Verificando acesso...</span>
+      <button type="button" id="btnInitIds" class="btn btn-warn btn-sm hidden">Inicializar IDs estáveis</button>
+      <button type="button" id="btnRefresh" class="btn btn-topbar">Atualizar da planilha</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Alerta global (erros de conexão/permissão ou avisos operacionais) -->
+    <div id="globalAlert" class="alert hidden" role="alert"></div>
+
+    <!-- Barra de Data de Referência e Escopo -->
+    <section class="control-card" aria-label="Data de consulta e modo de exibição">
+      <div class="date-scope-row">
+        <div class="date-nav">
+          <div class="date-label-block">
+            <span class="date-label-caption">Data usada na consulta</span>
+            <span id="referenceDateDisplay" class="date-label-value">--/--/----</span>
+          </div>
+          <button type="button" id="btnPrevDay" class="btn btn-sm" title="Dia anterior">&larr; Anterior</button>
+          <button type="button" id="btnToday" class="btn btn-sm">Hoje</button>
+          <input type="date" id="referenceDateInput" class="date-input" aria-label="Escolher outra data de consulta">
+          <button type="button" id="btnNextDay" class="btn btn-sm" title="Próximo dia">Próximo &rarr;</button>
+        </div>
+
+        <div class="scope-tabs" role="tablist" aria-label="Escopo da listagem">
+          <button type="button" id="tabAttention" class="scope-tab active" role="tab" aria-selected="true">
+            Atenção do dia (<span id="countTabAttention">0</span>)
+          </button>
+          <button type="button" id="tabAll" class="scope-tab" role="tab" aria-selected="false">
+            Toda a agenda (<span id="countTabAll">0</span>)
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Resumo do Dia -->
+    <section class="kpi-grid" aria-label="Resumo operacional da data">
+      <div class="kpi-card pending">
+        <div class="kpi-title">Pendentes de conferência</div>
+        <div id="kpiPending" class="kpi-value">0</div>
+        <div class="kpi-sub">Data fatal anterior + Protocolado = Não (não comprova perda de prazo)</div>
+      </div>
+      <div class="kpi-card fatal">
+        <div class="kpi-title">Prazos fatais na data</div>
+        <div id="kpiFatal" class="kpi-value">0</div>
+        <div class="kpi-sub">Registros com Data fatal igual à data consultada</div>
+      </div>
+      <div class="kpi-card juntada">
+        <div class="kpi-title">Juntadas na data</div>
+        <div id="kpiJuntada" class="kpi-value">0</div>
+        <div class="kpi-sub">Registros com Data da juntada igual à data consultada</div>
+      </div>
+      <div class="kpi-card filtered">
+        <div class="kpi-title">Exibidos na tabela</div>
+        <div id="kpiVisible" class="kpi-value">0</div>
+        <div id="kpiVisibleSub" class="kpi-sub">Após busca e filtros aplicados na sua tela</div>
+      </div>
+    </section>
+
+    <!-- Busca e Filtros Combináveis -->
+    <section class="control-card" aria-label="Busca e filtros">
+      <div class="filters-grid">
+        <div class="field-group">
+          <label for="searchInput">Buscar por processo ou cliente</label>
+          <input
+            type="search"
+            id="searchInput"
+            placeholder="Ex.: 0004821-15.2025..., 0004821152025 ou nome do cliente"
+            autocomplete="off"
+          >
+        </div>
+        <div class="field-group">
+          <label for="filterResponsavel">Responsável</label>
+          <select id="filterResponsavel"><option value="">Todos</option></select>
+        </div>
+        <div class="field-group">
+          <label for="filterTribunal">Tribunal</label>
+          <select id="filterTribunal"><option value="">Todos</option></select>
+        </div>
+        <div class="field-group">
+          <label for="filterPriorizacao">Priorização</label>
+          <select id="filterPriorizacao"><option value="">Todas</option></select>
+        </div>
+        <div class="field-group">
+          <label for="filterTipo">Tipo</label>
+          <select id="filterTipo"><option value="">Todos</option></select>
+        </div>
+        <div class="field-group">
+          <label for="filterProtocolado">Protocolado</label>
+          <select id="filterProtocolado"><option value="">Todos</option></select>
+        </div>
+        <div>
+          <button type="button" id="btnClearFilters" class="btn">Limpar filtros</button>
+        </div>
+      </div>
+      <div class="filters-footer">
+        <span>Filtros e busca atuam apenas na sua sessão local e não alteram a visualização dos colegas nem a planilha.</span>
+        <span id="extraMatchesHint" class="hidden"></span>
+      </div>
+    </section>
+
+    <!-- Tabela de Prazos -->
+    <section class="table-card" aria-label="Lista de prazos">
+      <div id="loadingState" class="loading-state">Carregando prazos da planilha...</div>
+      <div id="tableWrapper" class="table-scroll hidden">
+        <table class="agenda-table">
+          <thead>
+            <tr>
+              <th>Atenção</th>
+              <th>Data fatal</th>
+              <th>Data juntada</th>
+              <th>Processo / Tribunal</th>
+              <th>Cliente</th>
+              <th>Responsável</th>
+              <th>Priorização</th>
+              <th>Próximos passos</th>
+              <th>Protocolado</th>
+              <th>Ação</th>
+            </tr>
+          </thead>
+          <tbody id="agendaTableBody"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="empty-state hidden">
+        <h3 id="emptyStateTitle">Nenhum prazo encontrado</h3>
+        <p id="emptyStateDesc">Ajuste a data consultada, os filtros ou alterne para "Toda a agenda".</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal / Drawer de Visualização Completa e Edição -->
+  <div id="recordModalBackdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-drawer">
+      <div class="modal-header">
+        <div>
+          <h2 id="modalTitle">Processo</h2>
+          <div id="modalSubtitle" class="modal-header-sub"></div>
+        </div>
+        <button type="button" id="btnCloseModal" class="btn btn-topbar btn-sm" aria-label="Fechar">Fechar &times;</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Aviso de conflito de edição simultânea -->
+        <div id="conflictPanel" class="conflict-panel hidden">
+          <h4>Conflito de edição detectado</h4>
+          <p id="conflictMessage" style="margin:0 0 8px;"></p>
+          <div id="conflictDetails" style="font-size:12.5px; margin-bottom:10px;"></div>
+          <button type="button" id="btnReloadAfterConflict" class="btn btn-warn btn-sm">
+            Recarregar dados atuais da planilha
+          </button>
+        </div>
+
+        <!-- Aviso para usuário somente leitura -->
+        <div id="viewerNotice" class="alert alert-warn hidden">
+          <span>Seu acesso a esta planilha é <strong>somente leitura</strong>. Você pode consultar todos os campos, mas o salvamento está bloqueado.</span>
+        </div>
+
+        <!-- Seção 1: Identificação e Metadados -->
+        <h3 class="section-title">Dados do Registro (Colunas A a P)</h3>
+        <div class="detail-grid">
+          <div class="detail-item">
+            <div class="detail-label">Número do Processo (Col. E)</div>
+            <div class="detail-value mono" id="detProcesso"></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Cliente (Col. F)</div>
+            <div class="detail-value" id="detCliente"></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Tribunal (Col. B)</div>
+            <div class="detail-value" id="detTribunal"></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Tipo (Col. I)</div>
+            <div class="detail-value" id="detTipo"></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Última atualização (Col. J)</div>
+            <div class="detail-value mono" id="detUltimaAtualizacao"></div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Coluna A ("3") / Identificador Estável</div>
+            <div class="detail-value mono" id="detMetaIds"></div>
+          </div>
+        </div>
+
+        <!-- Seção 2: Quatro Datas Preservadas Separadamente -->
+        <h3 class="section-title">Datas de Prazo e Juntada (preservadas separadamente)</h3>
+        <div class="dates-grid">
+          <div class="detail-item date-box">
+            <div class="detail-label">Fim do Prazo (C)</div>
+            <div class="detail-value mono" id="detFimDoPrazo"></div>
+          </div>
+          <div class="detail-item date-box">
+            <div class="detail-label">Limite juntada (D)</div>
+            <div class="detail-value mono" id="detPrazoLimiteJuntada"></div>
+          </div>
+          <div class="detail-item date-box">
+            <div class="detail-label">Data fatal (K)</div>
+            <div class="detail-value mono" id="detDataFatal"></div>
+          </div>
+          <div class="detail-item date-box">
+            <div class="detail-label">Data da juntada (L)</div>
+            <div class="detail-value mono" id="detDataJuntada"></div>
+          </div>
+        </div>
+
+        <!-- Seção 3: Campos Editáveis -->
+        <h3 class="section-title">Atualização da Controladoria</h3>
+        <form id="editRecordForm" onsubmit="return false;">
+          <div class="edit-grid">
+            <div class="field-group span-2">
+              <label for="editProximosPassos">Próximos passos (Col. G)</label>
+              <textarea id="editProximosPassos"></textarea>
+            </div>
+            <div class="field-group">
+              <label for="editResponsavel">Responsável (Col. O)</label>
+              <input type="text" id="editResponsavel" list="responsavelDatalist" autocomplete="off">
+              <datalist id="responsavelDatalist"></datalist>
+            </div>
+            <div class="field-group">
+              <label for="editPriorizacao">Priorização (Col. H)</label>
+              <select id="editPriorizacao"></select>
+            </div>
+            <div class="field-group">
+              <label for="editProtocolado">Protocolado (Col. N — alteração explícita)</label>
+              <select id="editProtocolado"></select>
+            </div>
+            <div class="field-group">
+              <label>Situação na data consultada</label>
+              <div id="detAttentionTags" style="padding-top:6px;"></div>
+            </div>
+            <div class="field-group span-2">
+              <label for="editObservacaoM">Observação (M)</label>
+              <textarea id="editObservacaoM"></textarea>
+            </div>
+            <div class="field-group span-2">
+              <label for="editObservacaoP">Observação (P)</label>
+              <textarea id="editObservacaoP"></textarea>
+            </div>
+          </div>
+        </form>
+
+        <!-- Painel de Confirmação Antes de Gravar -->
+        <div id="confirmSavePanel" class="confirm-panel hidden">
+          <h4>Confirmar gravação na planilha</h4>
+          <div id="confirmContextBox" class="confirm-context"></div>
+          <ul id="confirmDiffList" class="diff-list"></ul>
+          <div style="display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap;">
+            <button type="button" id="btnCancelConfirm" class="btn btn-sm">Voltar e ajustar</button>
+            <button type="button" id="btnExecuteSave" class="btn btn-primary btn-sm">Confirmar gravação na planilha</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <span id="modalFooterStatus" style="font-size:12px; color:var(--text-muted);"></span>
+        <div style="display:flex; gap:8px;">
+          <button type="button" id="btnCloseModalFooter" class="btn">Cancelar</button>
+          <button type="button" id="btnReviewSave" class="btn btn-primary">Revisar e salvar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toasts -->
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <?!= include('AppScript'); ?>
+</body>
+</html>

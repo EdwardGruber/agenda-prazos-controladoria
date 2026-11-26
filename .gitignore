@@ -1,0 +1,34 @@
+# Credenciais, variáveis de ambiente e segredos (NUNCA versionar)
+.env
+.env.*
+*.env
+.clasp.json
+.clasprc.json
+credentials*.json
+*secret*.json
+*token*.json
+*.pem
+*.key
+
+# Credenciais do Neon / banco de dados (NUNCA versionar)
+*neon*.json
+*neon*.txt
+*neon*.key
+*neon*.conf
+neon-credentials*
+database-credentials*
+
+# Planilhas reais e exportações do escritório (manter apenas exemplo fictício)
+*.xlsx
+*.xls
+*.xlsm
+*.ods
+*.csv
+!sample-data/agenda-controladoria-exemplo.csv
+data-real/
+
+# Dependências e arquivos temporários
+node_modules/
+npm-debug.log*
+.DS_Store
+Thumbs.db

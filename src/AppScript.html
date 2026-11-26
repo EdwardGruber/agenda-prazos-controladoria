@@ -1,0 +1,1007 @@
+<script>
+(function () {
+  'use strict';
+
+  var EDITABLE_FIELDS = [
+    { key: 'proximosPassos', elId: 'editProximosPassos', label: 'Próximos passos' },
+    { key: 'responsavel', elId: 'editResponsavel', label: 'Responsável' },
+    { key: 'priorizacao', elId: 'editPriorizacao', label: 'Priorização' },
+    { key: 'protocolado', elId: 'editProtocolado', label: 'Protocolado' },
+    { key: 'observacaoM', elId: 'editObservacaoM', label: 'Observação (M)' },
+    { key: 'observacaoP', elId: 'editObservacaoP', label: 'Observação (P)' }
+  ];
+
+  var PRIORITY_RANK = {
+    urgente: 1,
+    alta: 2,
+    media: 3,
+    baixa: 4,
+    'sem urgencia': 5
+  };
+
+  var state = {
+    records: [],
+    options: {
+      responsavel: [],
+      tribunal: [],
+      priorizacao: [],
+      tipo: [],
+      protocolado: []
+    },
+    userAccess: {
+      email: '',
+      canEdit: false,
+      role: 'VIEWER',
+      permissionLabel: 'Somente leitura'
+    },
+    meta: {
+      spreadsheetName: '',
+      sheetName: '',
+      timezone: 'America/Sao_Paulo',
+      todayIso: '',
+      totalRecords: 0,
+      missingIdCount: 0,
+      isDemo: false,
+      loadedAt: ''
+    },
+    referenceDateIso: '',
+    scope: 'attention', // 'attention' | 'all'
+    filters: {
+      search: '',
+      responsavel: '',
+      tribunal: '',
+      priorizacao: '',
+      tipo: '',
+      protocolado: ''
+    },
+    selectedRecordKey: null,
+    selectedRecord: null,
+    isSaving: false,
+    pendingDiffs: []
+  };
+
+  /* -------------------- Adaptador de Transporte (GAS vs Demo Local) -------------------- */
+
+  function callServer(methodName, payload) {
+    return new Promise(function (resolve, reject) {
+      if (window.google && window.google.script && window.google.script.run) {
+        var runner = window.google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(function (err) {
+            reject(new Error((err && err.message) || String(err || 'Erro de comunicação com o servidor.')));
+          });
+        if (payload !== undefined) {
+          runner[methodName](payload);
+        } else {
+          runner[methodName]();
+        }
+        return;
+      }
+      reject(new Error('Ambiente Google Apps Script não detectado.'));
+    });
+  }
+
+  /* -------------------- Utilitários de Texto e Datas -------------------- */
+
+  function normalizeText(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  }
+
+  function normalizeDigits(value) {
+    return String(value || '').replace(/\D+/g, '');
+  }
+
+  function normalizeAlphanumeric(value) {
+    return normalizeText(value).replace(/[^a-z0-9]+/g, '');
+  }
+
+  function escapeHtml(str) {
+    return String(str === null || str === undefined ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function recordKey(rec) {
+    return rec.id || rec.tempRowKey;
+  }
+
+  function isProtocoladoNao(val) {
+    return normalizeText(val) === 'nao';
+  }
+
+  function isProtocoladoSim(val) {
+    return normalizeText(val) === 'sim';
+  }
+
+  function classifyForDate(record, refIso) {
+    var fatalIso = record.dataFatal && record.dataFatal.iso ? record.dataFatal.iso : null;
+    var juntadaIso = record.dataJuntada && record.dataJuntada.iso ? record.dataJuntada.iso : null;
+    var isFatalOnDate = Boolean(fatalIso && fatalIso === refIso);
+    var isJuntadaOnDate = Boolean(juntadaIso && juntadaIso === refIso);
+    var isPendingReview = Boolean(fatalIso && fatalIso < refIso && isProtocoladoNao(record.protocolado));
+
+    return {
+      inAttentionView: isFatalOnDate || isJuntadaOnDate || isPendingReview,
+      isFatalOnDate: isFatalOnDate,
+      isJuntadaOnDate: isJuntadaOnDate,
+      isPendingReview: isPendingReview
+    };
+  }
+
+  function matchesSearch(record, query) {
+    if (!query || !query.trim()) return true;
+    var qText = normalizeText(query);
+    var qDigits = normalizeDigits(query);
+    var qAlnum = normalizeAlphanumeric(query);
+
+    if (qText && normalizeText(record.cliente).indexOf(qText) !== -1) return true;
+    if (qText && normalizeText(record.numeroProcesso).indexOf(qText) !== -1) return true;
+    if (qAlnum && normalizeAlphanumeric(record.numeroProcesso).indexOf(qAlnum) !== -1) return true;
+
+    var hasLetters = /[a-z]/i.test(qText);
+    if (!hasLetters && qDigits) {
+      var procDigits = normalizeDigits(record.numeroProcesso);
+      if (procDigits && procDigits.indexOf(qDigits) !== -1) return true;
+    }
+    return false;
+  }
+
+  function matchesFilters(record) {
+    if (!matchesSearch(record, state.filters.search)) return false;
+    if (state.filters.responsavel && normalizeText(record.responsavel) !== normalizeText(state.filters.responsavel)) return false;
+    if (state.filters.tribunal && normalizeText(record.tribunal) !== normalizeText(state.filters.tribunal)) return false;
+    if (state.filters.priorizacao && normalizeText(record.priorizacao) !== normalizeText(state.filters.priorizacao)) return false;
+    if (state.filters.tipo && normalizeText(record.tipo) !== normalizeText(state.filters.tipo)) return false;
+    if (state.filters.protocolado && normalizeText(record.protocolado) !== normalizeText(state.filters.protocolado)) return false;
+    return true;
+  }
+
+  function shiftIsoDate(iso, deltaDays) {
+    var parts = iso.split('-').map(Number);
+    var dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+    dt.setUTCDate(dt.getUTCDate() + deltaDays);
+    var y = dt.getUTCFullYear();
+    var m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    var d = String(dt.getUTCDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+
+  function formatDateHeaderPtBr(iso) {
+    if (!iso) return '--/--/----';
+    var parts = iso.split('-').map(Number);
+    var dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 12, 0, 0));
+    var weekdays = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+    var br = String(parts[2]).padStart(2, '0') + '/' + String(parts[1]).padStart(2, '0') + '/' + parts[0];
+    var suffix = iso === state.meta.todayIso ? ' • Hoje' : '';
+    return br + ' (' + weekdays[dt.getUTCDay()] + ')' + suffix;
+  }
+
+  function priorityClass(prio) {
+    var n = normalizeText(prio);
+    if (n === 'urgente') return 'prio-urgente';
+    if (n === 'alta') return 'prio-alta';
+    if (n === 'media') return 'prio-media';
+    if (n === 'baixa') return 'prio-baixa';
+    if (n === 'sem urgencia') return 'prio-sem-urgencia';
+    return 'badge-neutral';
+  }
+
+  function sortRecords(list, refIso) {
+    return list.slice().sort(function (a, b) {
+      var ca = classifyForDate(a, refIso);
+      var cb = classifyForDate(b, refIso);
+
+      // 1) Em atenção: Pendente de conferência -> Fatal no dia -> Juntada no dia -> Outros
+      var wa = ca.isPendingReview ? 1 : (ca.isFatalOnDate ? 2 : (ca.isJuntadaOnDate ? 3 : 4));
+      var wb = cb.isPendingReview ? 1 : (cb.isFatalOnDate ? 2 : (cb.isJuntadaOnDate ? 3 : 4));
+      if (wa !== wb) return wa - wb;
+
+      // 2) Data fatal mais próxima primeiro (vazias por último)
+      var fa = (a.dataFatal && a.dataFatal.iso) || '9999-12-31';
+      var fb = (b.dataFatal && b.dataFatal.iso) || '9999-12-31';
+      if (fa !== fb) return fa < fb ? -1 : 1;
+
+      // 3) Prioridade
+      var pa = PRIORITY_RANK[normalizeText(a.priorizacao)] || 99;
+      var pb = PRIORITY_RANK[normalizeText(b.priorizacao)] || 99;
+      if (pa !== pb) return pa - pb;
+
+      return (a.numeroProcesso || '').localeCompare(b.numeroProcesso || '');
+    });
+  }
+
+  /* -------------------- Referências DOM -------------------- */
+
+  var els = {
+    demoBanner: document.getElementById('demoBanner'),
+    demoProfileSelect: document.getElementById('demoProfileSelect'),
+    btnDemoReorder: document.getElementById('btnDemoReorder'),
+    btnDemoSimulateColleague: document.getElementById('btnDemoSimulateColleague'),
+    btnDemoReset: document.getElementById('btnDemoReset'),
+    metaSheetInfo: document.getElementById('metaSheetInfo'),
+    metaTimezoneInfo: document.getElementById('metaTimezoneInfo'),
+    metaSyncInfo: document.getElementById('metaSyncInfo'),
+    userAccessBadge: document.getElementById('userAccessBadge'),
+    btnInitIds: document.getElementById('btnInitIds'),
+    btnRefresh: document.getElementById('btnRefresh'),
+    globalAlert: document.getElementById('globalAlert'),
+    referenceDateDisplay: document.getElementById('referenceDateDisplay'),
+    referenceDateInput: document.getElementById('referenceDateInput'),
+    btnPrevDay: document.getElementById('btnPrevDay'),
+    btnToday: document.getElementById('btnToday'),
+    btnNextDay: document.getElementById('btnNextDay'),
+    tabAttention: document.getElementById('tabAttention'),
+    tabAll: document.getElementById('tabAll'),
+    countTabAttention: document.getElementById('countTabAttention'),
+    countTabAll: document.getElementById('countTabAll'),
+    kpiPending: document.getElementById('kpiPending'),
+    kpiFatal: document.getElementById('kpiFatal'),
+    kpiJuntada: document.getElementById('kpiJuntada'),
+    kpiVisible: document.getElementById('kpiVisible'),
+    kpiVisibleSub: document.getElementById('kpiVisibleSub'),
+    searchInput: document.getElementById('searchInput'),
+    filterResponsavel: document.getElementById('filterResponsavel'),
+    filterTribunal: document.getElementById('filterTribunal'),
+    filterPriorizacao: document.getElementById('filterPriorizacao'),
+    filterTipo: document.getElementById('filterTipo'),
+    filterProtocolado: document.getElementById('filterProtocolado'),
+    btnClearFilters: document.getElementById('btnClearFilters'),
+    extraMatchesHint: document.getElementById('extraMatchesHint'),
+    loadingState: document.getElementById('loadingState'),
+    tableWrapper: document.getElementById('tableWrapper'),
+    agendaTableBody: document.getElementById('agendaTableBody'),
+    emptyState: document.getElementById('emptyState'),
+    emptyStateTitle: document.getElementById('emptyStateTitle'),
+    emptyStateDesc: document.getElementById('emptyStateDesc'),
+    modalBackdrop: document.getElementById('recordModalBackdrop'),
+    modalTitle: document.getElementById('modalTitle'),
+    modalSubtitle: document.getElementById('modalSubtitle'),
+    btnCloseModal: document.getElementById('btnCloseModal'),
+    btnCloseModalFooter: document.getElementById('btnCloseModalFooter'),
+    conflictPanel: document.getElementById('conflictPanel'),
+    conflictMessage: document.getElementById('conflictMessage'),
+    conflictDetails: document.getElementById('conflictDetails'),
+    btnReloadAfterConflict: document.getElementById('btnReloadAfterConflict'),
+    viewerNotice: document.getElementById('viewerNotice'),
+    detProcesso: document.getElementById('detProcesso'),
+    detCliente: document.getElementById('detCliente'),
+    detTribunal: document.getElementById('detTribunal'),
+    detTipo: document.getElementById('detTipo'),
+    detUltimaAtualizacao: document.getElementById('detUltimaAtualizacao'),
+    detMetaIds: document.getElementById('detMetaIds'),
+    detFimDoPrazo: document.getElementById('detFimDoPrazo'),
+    detPrazoLimiteJuntada: document.getElementById('detPrazoLimiteJuntada'),
+    detDataFatal: document.getElementById('detDataFatal'),
+    detDataJuntada: document.getElementById('detDataJuntada'),
+    detAttentionTags: document.getElementById('detAttentionTags'),
+    editProximosPassos: document.getElementById('editProximosPassos'),
+    editResponsavel: document.getElementById('editResponsavel'),
+    responsavelDatalist: document.getElementById('responsavelDatalist'),
+    editPriorizacao: document.getElementById('editPriorizacao'),
+    editProtocolado: document.getElementById('editProtocolado'),
+    editObservacaoM: document.getElementById('editObservacaoM'),
+    editObservacaoP: document.getElementById('editObservacaoP'),
+    confirmSavePanel: document.getElementById('confirmSavePanel'),
+    confirmContextBox: document.getElementById('confirmContextBox'),
+    confirmDiffList: document.getElementById('confirmDiffList'),
+    btnCancelConfirm: document.getElementById('btnCancelConfirm'),
+    btnExecuteSave: document.getElementById('btnExecuteSave'),
+    btnReviewSave: document.getElementById('btnReviewSave'),
+    modalFooterStatus: document.getElementById('modalFooterStatus'),
+    toastContainer: document.getElementById('toastContainer')
+  };
+
+  /* -------------------- Feedback Visual -------------------- */
+
+  function showToast(message, type) {
+    var div = document.createElement('div');
+    div.className = 'toast ' + (type || '');
+    div.textContent = message;
+    els.toastContainer.appendChild(div);
+    setTimeout(function () {
+      if (div.parentNode) div.parentNode.removeChild(div);
+    }, 4500);
+  }
+
+  function showGlobalAlert(message, type) {
+    if (!message) {
+      els.globalAlert.className = 'alert hidden';
+      els.globalAlert.textContent = '';
+      return;
+    }
+    els.globalAlert.className = 'alert alert-' + (type || 'info');
+    els.globalAlert.textContent = message;
+  }
+
+  /* -------------------- População de Opções Dinâmicas -------------------- */
+
+  function populateSelect(selectEl, options, allLabel, currentValue) {
+    var html = '';
+    if (allLabel !== null) {
+      html += '<option value="">' + escapeHtml(allLabel) + '</option>';
+    }
+    for (var i = 0; i < options.length; i++) {
+      var opt = options[i];
+      html += '<option value="' + escapeHtml(opt) + '">' + escapeHtml(opt) + '</option>';
+    }
+    selectEl.innerHTML = html;
+    if (currentValue !== undefined) {
+      selectEl.value = currentValue;
+    }
+  }
+
+  function populateAllFilterSelects() {
+    populateSelect(els.filterResponsavel, state.options.responsavel || [], 'Todos', state.filters.responsavel);
+    populateSelect(els.filterTribunal, state.options.tribunal || [], 'Todos', state.filters.tribunal);
+    populateSelect(els.filterPriorizacao, state.options.priorizacao || [], 'Todas', state.filters.priorizacao);
+    populateSelect(els.filterTipo, state.options.tipo || [], 'Todos', state.filters.tipo);
+    populateSelect(els.filterProtocolado, state.options.protocolado || [], 'Todos', state.filters.protocolado);
+
+    var datalistHtml = (state.options.responsavel || []).map(function (name) {
+      return '<option value="' + escapeHtml(name) + '"></option>';
+    }).join('');
+    els.responsavelDatalist.innerHTML = datalistHtml;
+  }
+
+  /* -------------------- Renderização Principal -------------------- */
+
+  function renderHeaderAndDemoBanner() {
+    if (state.meta.isDemo) {
+      els.demoBanner.classList.remove('hidden');
+      els.demoProfileSelect.value = state.userAccess.canEdit ? 'EDITOR' : 'VIEWER';
+    } else {
+      els.demoBanner.classList.add('hidden');
+    }
+
+    els.metaSheetInfo.textContent =
+      'Planilha: ' + (state.meta.spreadsheetName || 'Não informada') +
+      ' • Aba: ' + (state.meta.sheetName || '-');
+    els.metaTimezoneInfo.textContent = 'Fuso: ' + (state.meta.timezone || 'America/Sao_Paulo');
+    els.metaSyncInfo.textContent = state.meta.loadedAt ? 'Consultado em ' + state.meta.loadedAt : '';
+
+    els.userAccessBadge.className = 'access-badge ' + (state.userAccess.canEdit ? 'editor' : 'viewer');
+    els.userAccessBadge.textContent =
+      'Acesso: ' + state.userAccess.permissionLabel +
+      (state.userAccess.email ? ' (' + state.userAccess.email + ')' : '');
+
+    if (state.userAccess.canEdit && state.meta.missingIdCount > 0) {
+      els.btnInitIds.classList.remove('hidden');
+      els.btnInitIds.textContent = 'Inicializar IDs estáveis (' + state.meta.missingIdCount + ')';
+    } else {
+      els.btnInitIds.classList.add('hidden');
+    }
+  }
+
+  function renderAttentionBadgesHtml(cls) {
+    var parts = [];
+    if (cls.isPendingReview) {
+      parts.push('<span class="badge badge-pending" title="Data fatal anterior à data consultada com Protocolado = Não">Pendente de conferência</span>');
+    }
+    if (cls.isFatalOnDate) {
+      parts.push('<span class="badge badge-fatal">Fatal no dia</span>');
+    }
+    if (cls.isJuntadaOnDate) {
+      parts.push('<span class="badge badge-juntada">Juntada no dia</span>');
+    }
+    if (parts.length === 0) {
+      parts.push('<span class="badge badge-neutral">Agenda geral</span>');
+    }
+    return '<div class="badge-stack">' + parts.join('') + '</div>';
+  }
+
+  function renderAgenda() {
+    var refIso = state.referenceDateIso || state.meta.todayIso;
+    els.referenceDateDisplay.textContent = formatDateHeaderPtBr(refIso);
+    els.referenceDateInput.value = refIso;
+
+    var attentionAll = [];
+    var pendingCount = 0;
+    var fatalCount = 0;
+    var juntadaCount = 0;
+
+    for (var i = 0; i < state.records.length; i++) {
+      var rec = state.records[i];
+      var cls = classifyForDate(rec, refIso);
+      if (cls.isPendingReview) pendingCount++;
+      if (cls.isFatalOnDate) fatalCount++;
+      if (cls.isJuntadaOnDate) juntadaCount++;
+      if (cls.inAttentionView) attentionAll.push(rec);
+    }
+
+    els.kpiPending.textContent = String(pendingCount);
+    els.kpiFatal.textContent = String(fatalCount);
+    els.kpiJuntada.textContent = String(juntadaCount);
+
+    els.countTabAttention.textContent = String(attentionAll.length);
+    els.countTabAll.textContent = String(state.records.length);
+
+    els.tabAttention.classList.toggle('active', state.scope === 'attention');
+    els.tabAttention.setAttribute('aria-selected', String(state.scope === 'attention'));
+    els.tabAll.classList.toggle('active', state.scope === 'all');
+    els.tabAll.setAttribute('aria-selected', String(state.scope === 'all'));
+
+    var baseList = state.scope === 'attention' ? attentionAll : state.records;
+    var visible = sortRecords(baseList.filter(matchesFilters), refIso);
+
+    els.kpiVisible.textContent = String(visible.length);
+    els.kpiVisibleSub.textContent = state.scope === 'attention'
+      ? 'Na visão de atenção do dia (com seus filtros)'
+      : 'Em toda a agenda (com seus filtros)';
+
+    // Avisa se há correspondências extras fora da visão diária quando o usuário pesquisa/filtra
+    var hasActiveFilter = Boolean(
+      state.filters.search.trim() ||
+      state.filters.responsavel ||
+      state.filters.tribunal ||
+      state.filters.priorizacao ||
+      state.filters.tipo ||
+      state.filters.protocolado
+    );
+
+    if (state.scope === 'attention' && hasActiveFilter) {
+      var totalAllMatches = state.records.filter(matchesFilters).length;
+      var extraCount = totalAllMatches - visible.length;
+      if (extraCount > 0) {
+        els.extraMatchesHint.classList.remove('hidden');
+        els.extraMatchesHint.innerHTML =
+          'Há <strong>' + extraCount + '</strong> outro(s) registro(s) fora da visão deste dia. ' +
+          '<button type="button" class="btn-link" id="btnSwitchToAllHint">Ver em Toda a agenda</button>';
+        var switchBtn = document.getElementById('btnSwitchToAllHint');
+        if (switchBtn) {
+          switchBtn.addEventListener('click', function () {
+            state.scope = 'all';
+            renderAgenda();
+          });
+        }
+      } else {
+        els.extraMatchesHint.classList.add('hidden');
+      }
+    } else {
+      els.extraMatchesHint.classList.add('hidden');
+    }
+
+    els.loadingState.classList.add('hidden');
+
+    if (visible.length === 0) {
+      els.tableWrapper.classList.add('hidden');
+      els.emptyState.classList.remove('hidden');
+      els.emptyStateTitle.textContent = hasActiveFilter
+        ? 'Nenhum registro corresponde aos filtros aplicados'
+        : 'Nenhum prazo em atenção para esta data';
+      els.emptyStateDesc.textContent = hasActiveFilter
+        ? 'Limpe os filtros ou alterne para "Toda a agenda" para consultar outros dias.'
+        : 'Navegue para outra data ou clique em "Toda a agenda" para consultar todos os registros.';
+      return;
+    }
+
+    els.emptyState.classList.add('hidden');
+    els.tableWrapper.classList.remove('hidden');
+
+    var rowsHtml = visible.map(function (rec) {
+      var cls = classifyForDate(rec, refIso);
+      var key = recordKey(rec);
+      var fatalDisplay = (rec.dataFatal && rec.dataFatal.display) || '';
+      var juntadaDisplay = (rec.dataJuntada && rec.dataJuntada.display) || '';
+
+      var fatalClass = 'col-date';
+      if (!fatalDisplay) fatalClass += ' is-empty';
+      else if (cls.isFatalOnDate) fatalClass += ' is-today';
+      else if (cls.isPendingReview) fatalClass += ' is-past-pending';
+
+      var juntadaClass = 'col-date';
+      if (!juntadaDisplay) juntadaClass += ' is-empty';
+      else if (cls.isJuntadaOnDate) juntadaClass += ' is-juntada-today';
+
+      var protClass = isProtocoladoSim(rec.protocolado)
+        ? 'prot-sim'
+        : (isProtocoladoNao(rec.protocolado) ? 'prot-nao' : 'badge-neutral');
+
+      var actionLabel = state.userAccess.canEdit ? 'Abrir / Editar' : 'Consultar';
+
+      return (
+        '<tr data-record-key="' + escapeHtml(key) + '" class="' + (cls.isPendingReview ? 'row-pending' : '') + '">' +
+          '<td>' + renderAttentionBadgesHtml(cls) + '</td>' +
+          '<td class="' + fatalClass + '">' + escapeHtml(fatalDisplay) + '</td>' +
+          '<td class="' + juntadaClass + '">' + escapeHtml(juntadaDisplay) + '</td>' +
+          '<td class="col-processo">' +
+            '<div class="proc-num">' + escapeHtml(rec.numeroProcesso || '') + '</div>' +
+            '<div class="proc-sub">' +
+              escapeHtml(rec.tribunal || 'Tribunal não informado') +
+              (rec.tipo ? ' • ' + escapeHtml(rec.tipo) : '') +
+            '</div>' +
+          '</td>' +
+          '<td class="col-cliente">' + escapeHtml(rec.cliente || '') + '</td>' +
+          '<td class="col-resp">' + escapeHtml(rec.responsavel || '') + '</td>' +
+          '<td>' +
+            (rec.priorizacao
+              ? '<span class="badge ' + priorityClass(rec.priorizacao) + '">' + escapeHtml(rec.priorizacao) + '</span>'
+              : '') +
+          '</td>' +
+          '<td class="col-passos"><div class="passos-preview" title="' + escapeHtml(rec.proximosPassos || '') + '">' +
+            escapeHtml(rec.proximosPassos || '') +
+          '</div></td>' +
+          '<td>' +
+            (rec.protocolado
+              ? '<span class="badge ' + protClass + '">' + escapeHtml(rec.protocolado) + '</span>'
+              : '') +
+          '</td>' +
+          '<td><button type="button" class="btn btn-sm" data-open-key="' + escapeHtml(key) + '">' + actionLabel + '</button></td>' +
+        '</tr>'
+      );
+    }).join('');
+
+    els.agendaTableBody.innerHTML = rowsHtml;
+  }
+
+  /* -------------------- Modal de Detalhe, Edição, Confirmação e Conflito -------------------- */
+
+  function populateEditSelectWithCurrent(selectEl, catalogOptions, currentVal) {
+    var list = catalogOptions.slice();
+    if (currentVal && list.map(normalizeText).indexOf(normalizeText(currentVal)) === -1) {
+      list.push(currentVal);
+    }
+    var html = '<option value=""></option>';
+    for (var i = 0; i < list.length; i++) {
+      html += '<option value="' + escapeHtml(list[i]) + '">' + escapeHtml(list[i]) + '</option>';
+    }
+    selectEl.innerHTML = html;
+    selectEl.value = currentVal || '';
+  }
+
+  function openRecordModal(key) {
+    var rec = null;
+    for (var i = 0; i < state.records.length; i++) {
+      if (recordKey(state.records[i]) === key) {
+        rec = state.records[i];
+        break;
+      }
+    }
+    if (!rec) return;
+
+    state.selectedRecordKey = key;
+    state.selectedRecord = rec;
+    state.pendingDiffs = [];
+
+    els.conflictPanel.classList.add('hidden');
+    els.confirmSavePanel.classList.add('hidden');
+
+    els.modalTitle.textContent = rec.numeroProcesso || 'Registro sem número de processo';
+    els.modalSubtitle.textContent = (rec.cliente || 'Cliente não informado') + ' • ' + (rec.tribunal || 'Tribunal não informado');
+
+    els.detProcesso.textContent = rec.numeroProcesso || '';
+    els.detCliente.textContent = rec.cliente || '';
+    els.detTribunal.textContent = rec.tribunal || '';
+    els.detTipo.textContent = rec.tipo || '';
+    els.detUltimaAtualizacao.textContent = rec.ultimaAtualizacao || '';
+    els.detMetaIds.textContent = 'Col. A: "' + (rec.colA || '') + '" • ID: ' + (rec.id || 'Será gerado ao salvar');
+
+    // Preserva exatamente as 4 datas separadas (vazias ficam vazias)
+    els.detFimDoPrazo.textContent = (rec.fimDoPrazo && rec.fimDoPrazo.display) || '';
+    els.detPrazoLimiteJuntada.textContent = (rec.prazoLimiteJuntada && rec.prazoLimiteJuntada.display) || '';
+    els.detDataFatal.textContent = (rec.dataFatal && rec.dataFatal.display) || '';
+    els.detDataJuntada.textContent = (rec.dataJuntada && rec.dataJuntada.display) || '';
+
+    var cls = classifyForDate(rec, state.referenceDateIso || state.meta.todayIso);
+    els.detAttentionTags.innerHTML = renderAttentionBadgesHtml(cls);
+
+    // Popula campos editáveis
+    els.editProximosPassos.value = rec.proximosPassos || '';
+    els.editResponsavel.value = rec.responsavel || '';
+    populateEditSelectWithCurrent(els.editPriorizacao, state.options.priorizacao || [], rec.priorizacao || '');
+    populateEditSelectWithCurrent(els.editProtocolado, state.options.protocolado || ['Não', 'Sim'], rec.protocolado || '');
+    els.editObservacaoM.value = rec.observacaoM || '';
+    els.editObservacaoP.value = rec.observacaoP || '';
+
+    var canEdit = Boolean(state.userAccess.canEdit);
+    els.viewerNotice.classList.toggle('hidden', canEdit);
+    for (var f = 0; f < EDITABLE_FIELDS.length; f++) {
+      var inputEl = document.getElementById(EDITABLE_FIELDS[f].elId);
+      if (inputEl) inputEl.disabled = !canEdit;
+    }
+
+    els.btnReviewSave.classList.toggle('hidden', !canEdit);
+    els.btnReviewSave.disabled = true;
+    els.modalFooterStatus.textContent = canEdit
+      ? 'Altere os campos desejados e clique em "Revisar e salvar".'
+      : 'Modo consulta (somente leitura).';
+
+    els.modalBackdrop.classList.remove('hidden');
+  }
+
+  function closeRecordModal() {
+    if (state.isSaving) return;
+    els.modalBackdrop.classList.add('hidden');
+    state.selectedRecordKey = null;
+    state.selectedRecord = null;
+    state.pendingDiffs = [];
+  }
+
+  function collectFormDiffs() {
+    if (!state.selectedRecord) return [];
+    var diffs = [];
+    for (var i = 0; i < EDITABLE_FIELDS.length; i++) {
+      var field = EDITABLE_FIELDS[i];
+      var inputEl = document.getElementById(field.elId);
+      var beforeVal = String(state.selectedRecord[field.key] || '').trim();
+      var afterVal = String((inputEl && inputEl.value) || '').trim();
+      if (beforeVal !== afterVal) {
+        diffs.push({
+          field: field.key,
+          label: field.label,
+          before: beforeVal,
+          after: afterVal
+        });
+      }
+    }
+    return diffs;
+  }
+
+  function onEditFormChanged() {
+    if (!state.userAccess.canEdit || state.isSaving) return;
+    var diffs = collectFormDiffs();
+    els.confirmSavePanel.classList.add('hidden');
+    els.btnReviewSave.disabled = diffs.length === 0;
+    els.modalFooterStatus.textContent = diffs.length > 0
+      ? diffs.length + ' campo(s) alterado(s) — aguardando revisão e confirmação.'
+      : 'Nenhuma alteração pendente.';
+  }
+
+  function showPreSaveConfirmation() {
+    if (!state.userAccess.canEdit || !state.selectedRecord) return;
+    var diffs = collectFormDiffs();
+    if (diffs.length === 0) {
+      showToast('Nenhuma alteração para gravar.', 'warn');
+      return;
+    }
+
+    state.pendingDiffs = diffs;
+    var rec = state.selectedRecord;
+
+    els.confirmContextBox.innerHTML =
+      '<div><strong>Processo:</strong> <span style="font-family:var(--font-mono)">' + escapeHtml(rec.numeroProcesso || '(vazio)') + '</span></div>' +
+      '<div><strong>Cliente:</strong> ' + escapeHtml(rec.cliente || '(vazio)') + '</div>' +
+      '<div><strong>Prazo deste registro:</strong> ' +
+        'Data fatal: <strong>' + escapeHtml((rec.dataFatal && rec.dataFatal.display) || '(vazio)') + '</strong>' +
+        ' • Data juntada: <strong>' + escapeHtml((rec.dataJuntada && rec.dataJuntada.display) || '(vazio)') + '</strong>' +
+        ' • Tipo: <strong>' + escapeHtml(rec.tipo || '(vazio)') + '</strong>' +
+      '</div>' +
+      '<div style="color:var(--text-muted); margin-top:3px;">ID estável: ' + escapeHtml(rec.id || 'Será criado na gravação') + ' • Última atualização será renovada somente após confirmação da planilha.</div>';
+
+    els.confirmDiffList.innerHTML = diffs.map(function (d) {
+      return (
+        '<li><strong>' + escapeHtml(d.label) + ':</strong> ' +
+          '<span class="diff-before">' + escapeHtml(d.before || '(vazio)') + '</span>' +
+          ' &rarr; ' +
+          '<span class="diff-after">' + escapeHtml(d.after || '(vazio)') + '</span>' +
+        '</li>'
+      );
+    }).join('');
+
+    els.confirmSavePanel.classList.remove('hidden');
+    els.confirmSavePanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function executeConfirmedSave() {
+    if (!state.userAccess.canEdit || !state.selectedRecord || state.isSaving) return;
+    var diffs = collectFormDiffs();
+    if (diffs.length === 0) return;
+
+    var changes = {};
+    for (var i = 0; i < diffs.length; i++) {
+      changes[diffs[i].field] = diffs[i].after;
+    }
+
+    var payload = {
+      recordId: state.selectedRecord.id,
+      tempRowKey: state.selectedRecord.tempRowKey,
+      expectedVersion: state.selectedRecord.version,
+      changes: changes
+    };
+
+    state.isSaving = true;
+    els.btnExecuteSave.disabled = true;
+    els.btnCancelConfirm.disabled = true;
+    els.btnReviewSave.disabled = true;
+    els.btnExecuteSave.textContent = 'Gravando na planilha...';
+    els.modalFooterStatus.textContent = 'Aguardando confirmação da planilha...';
+
+    callServer('apiSaveRecord', payload)
+      .then(function (res) {
+        state.isSaving = false;
+        els.btnExecuteSave.disabled = false;
+        els.btnCancelConfirm.disabled = false;
+        els.btnExecuteSave.textContent = 'Confirmar gravação na planilha';
+
+        if (res && res.ok && res.record) {
+          // Atualiza o registro local SOMENTE após resposta confirmada da planilha
+          var saved = res.record;
+          var replaced = false;
+          for (var idx = 0; idx < state.records.length; idx++) {
+            var cur = state.records[idx];
+            if ((saved.id && cur.id === saved.id) || (state.selectedRecord.tempRowKey && cur.tempRowKey === state.selectedRecord.tempRowKey)) {
+              state.records[idx] = saved;
+              replaced = true;
+              break;
+            }
+          }
+          if (!replaced) {
+            state.records.push(saved);
+          }
+
+          renderAgenda();
+          openRecordModal(recordKey(saved));
+          els.modalFooterStatus.textContent = 'Salvo e confirmado na planilha em ' + (res.savedAt || saved.ultimaAtualizacao) + '.';
+          showToast('Alterações confirmadas na planilha (' + saved.numeroProcesso + ').', 'success');
+          return;
+        }
+
+        if (res && res.code === 'CONFLICT') {
+          els.confirmSavePanel.classList.add('hidden');
+          showConflictState(res);
+          return;
+        }
+
+        els.confirmSavePanel.classList.add('hidden');
+        var errMsg = (res && res.message) || 'Não foi possível salvar na planilha.';
+        els.modalFooterStatus.textContent = errMsg;
+        showToast(errMsg, 'error');
+      })
+      .catch(function (err) {
+        state.isSaving = false;
+        els.btnExecuteSave.disabled = false;
+        els.btnCancelConfirm.disabled = false;
+        els.btnExecuteSave.textContent = 'Confirmar gravação na planilha';
+        els.modalFooterStatus.textContent = err.message;
+        showToast(err.message, 'error');
+      });
+  }
+
+  function showConflictState(res) {
+    els.conflictMessage.textContent = res.message || 'Outro colega alterou este registro na planilha.';
+    var cur = res.currentRecord;
+    if (cur) {
+      els.conflictDetails.innerHTML =
+        '<div><strong>Versão atual na planilha</strong> (Última atualização: ' + escapeHtml(cur.ultimaAtualizacao || 'não informada') + '):</div>' +
+        '<ul style="margin:6px 0 0 18px; padding:0;">' +
+          '<li>Próximos passos: <strong>' + escapeHtml(cur.proximosPassos || '(vazio)') + '</strong></li>' +
+          '<li>Responsável: <strong>' + escapeHtml(cur.responsavel || '(vazio)') + '</strong></li>' +
+          '<li>Priorização: <strong>' + escapeHtml(cur.priorizacao || '(vazio)') + '</strong></li>' +
+          '<li>Protocolado: <strong>' + escapeHtml(cur.protocolado || '(vazio)') + '</strong></li>' +
+          '<li>Observação (M): <strong>' + escapeHtml(cur.observacaoM || '(vazio)') + '</strong></li>' +
+          '<li>Observação (P): <strong>' + escapeHtml(cur.observacaoP || '(vazio)') + '</strong></li>' +
+        '</ul>';
+    } else {
+      els.conflictDetails.innerHTML = '';
+    }
+    els.conflictPanel.classList.remove('hidden');
+    els.modalFooterStatus.textContent = 'Gravação interrompida por conflito. Recarregue os dados atuais.';
+    showToast('Conflito detectado: registro já alterado por outro colega.', 'warn');
+  }
+
+  /* -------------------- Carga de Dados da Planilha -------------------- */
+
+  function loadAgendaData(options) {
+    var opts = options || {};
+    els.btnRefresh.disabled = true;
+    if (!opts.silent) {
+      els.loadingState.classList.remove('hidden');
+      els.tableWrapper.classList.add('hidden');
+      els.emptyState.classList.add('hidden');
+    }
+    showGlobalAlert('');
+
+    return callServer('apiGetAgendaData')
+      .then(function (res) {
+        els.btnRefresh.disabled = false;
+        if (!res || !res.ok) {
+          els.loadingState.classList.add('hidden');
+          showGlobalAlert((res && res.message) || 'Erro ao carregar dados da planilha.', 'danger');
+          return;
+        }
+
+        state.records = res.records || [];
+        state.options = res.options || state.options;
+        state.userAccess = res.userAccess || state.userAccess;
+        state.meta = res.meta || state.meta;
+
+        if (!state.referenceDateIso) {
+          state.referenceDateIso = state.meta.todayIso;
+        }
+
+        renderHeaderAndDemoBanner();
+        populateAllFilterSelects();
+        renderAgenda();
+
+        if (opts.reopenKey) {
+          openRecordModal(opts.reopenKey);
+          showToast('Dados atualizados da planilha.', 'info');
+        }
+      })
+      .catch(function (err) {
+        els.btnRefresh.disabled = false;
+        els.loadingState.classList.add('hidden');
+        showGlobalAlert(err.message || 'Falha de comunicação ao carregar a agenda.', 'danger');
+      });
+  }
+
+  /* -------------------- Ações do Modo Demonstração Local -------------------- */
+
+  function callDemoAction(action, body) {
+    return fetch('/api/demo/' + action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json(); });
+  }
+
+  /* -------------------- Bind de Eventos -------------------- */
+
+  function bindEvents() {
+    els.btnRefresh.addEventListener('click', function () {
+      loadAgendaData({ silent: false });
+    });
+
+    els.btnInitIds.addEventListener('click', function () {
+      els.btnInitIds.disabled = true;
+      callServer('apiEnsureStableIds')
+        .then(function (res) {
+          els.btnInitIds.disabled = false;
+          if (res && res.ok) {
+            showToast('IDs estáveis inicializados para ' + res.createdCount + ' linha(s).', 'success');
+            loadAgendaData({ silent: true });
+          } else {
+            showToast((res && res.message) || 'Não foi possível inicializar IDs.', 'error');
+          }
+        })
+        .catch(function (err) {
+          els.btnInitIds.disabled = false;
+          showToast(err.message, 'error');
+        });
+    });
+
+    els.btnPrevDay.addEventListener('click', function () {
+      state.referenceDateIso = shiftIsoDate(state.referenceDateIso, -1);
+      renderAgenda();
+    });
+
+    els.btnToday.addEventListener('click', function () {
+      state.referenceDateIso = state.meta.todayIso;
+      renderAgenda();
+    });
+
+    els.btnNextDay.addEventListener('click', function () {
+      state.referenceDateIso = shiftIsoDate(state.referenceDateIso, 1);
+      renderAgenda();
+    });
+
+    els.referenceDateInput.addEventListener('change', function (e) {
+      if (e.target.value) {
+        state.referenceDateIso = e.target.value;
+        renderAgenda();
+      }
+    });
+
+    els.tabAttention.addEventListener('click', function () {
+      state.scope = 'attention';
+      renderAgenda();
+    });
+
+    els.tabAll.addEventListener('click', function () {
+      state.scope = 'all';
+      renderAgenda();
+    });
+
+    els.searchInput.addEventListener('input', function (e) {
+      state.filters.search = e.target.value || '';
+      renderAgenda();
+    });
+
+    [
+      ['filterResponsavel', 'responsavel'],
+      ['filterTribunal', 'tribunal'],
+      ['filterPriorizacao', 'priorizacao'],
+      ['filterTipo', 'tipo'],
+      ['filterProtocolado', 'protocolado']
+    ].forEach(function (pair) {
+      els[pair[0]].addEventListener('change', function (e) {
+        state.filters[pair[1]] = e.target.value || '';
+        renderAgenda();
+      });
+    });
+
+    els.btnClearFilters.addEventListener('click', function () {
+      state.filters = {
+        search: '',
+        responsavel: '',
+        tribunal: '',
+        priorizacao: '',
+        tipo: '',
+        protocolado: ''
+      };
+      els.searchInput.value = '';
+      populateAllFilterSelects();
+      renderAgenda();
+    });
+
+    els.agendaTableBody.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-open-key]');
+      var row = e.target.closest('tr[data-record-key]');
+      var key = (btn && btn.getAttribute('data-open-key')) || (row && row.getAttribute('data-record-key'));
+      if (key) {
+        openRecordModal(key);
+      }
+    });
+
+    els.btnCloseModal.addEventListener('click', closeRecordModal);
+    els.btnCloseModalFooter.addEventListener('click', closeRecordModal);
+    els.modalBackdrop.addEventListener('click', function (e) {
+      if (e.target === els.modalBackdrop) closeRecordModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !els.modalBackdrop.classList.contains('hidden')) {
+        closeRecordModal();
+      }
+    });
+
+    EDITABLE_FIELDS.forEach(function (field) {
+      var inputEl = document.getElementById(field.elId);
+      if (inputEl) {
+        inputEl.addEventListener('input', onEditFormChanged);
+        inputEl.addEventListener('change', onEditFormChanged);
+      }
+    });
+
+    els.btnReviewSave.addEventListener('click', showPreSaveConfirmation);
+    els.btnCancelConfirm.addEventListener('click', function () {
+      els.confirmSavePanel.classList.add('hidden');
+    });
+    els.btnExecuteSave.addEventListener('click', executeConfirmedSave);
+
+    els.btnReloadAfterConflict.addEventListener('click', function () {
+      var currentKey = state.selectedRecordKey;
+      loadAgendaData({ silent: true, reopenKey: currentKey });
+    });
+
+    // Controles exclusivos do modo demo local
+    els.demoProfileSelect.addEventListener('change', function (e) {
+      callDemoAction('set-role', { role: e.target.value }).then(function () {
+        closeRecordModal();
+        loadAgendaData({ silent: true });
+        showToast('Perfil simulado alterado para: ' + (e.target.value === 'EDITOR' ? 'Editor' : 'Somente leitura'), 'info');
+      });
+    });
+
+    els.btnDemoReorder.addEventListener('click', function () {
+      callDemoAction('reorder').then(function (res) {
+        showToast(res.message || 'Linhas da planilha reordenadas.', 'info');
+      });
+    });
+
+    els.btnDemoSimulateColleague.addEventListener('click', function () {
+      var targetId = (state.selectedRecord && state.selectedRecord.id) || (state.records[0] && state.records[0].id);
+      callDemoAction('simulate-colleague-edit', { recordId: targetId }).then(function (res) {
+        showToast(res.message || 'Edição simultânea de colega simulada na planilha.', 'warn');
+      });
+    });
+
+    els.btnDemoReset.addEventListener('click', function () {
+      callDemoAction('reset').then(function () {
+        closeRecordModal();
+        loadAgendaData({ silent: true });
+        showToast('Dados fictícios de demonstração restaurados.', 'success');
+      });
+    });
+  }
+
+  bindEvents();
+  loadAgendaData({ silent: false });
+})();
+</script>
