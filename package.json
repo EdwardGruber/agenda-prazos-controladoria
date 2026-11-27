@@ -4,9 +4,10 @@
   "description": "Agenda web de prazos para controladoria jurídica (Google Apps Script + Google Planilhas + modo demonstração local)",
   "private": true,
   "scripts": {
+    "build:pages": "node pages/build.js",
     "demo": "node local-demo/server.js",
     "start": "node local-demo/server.js",
-    "test": "node tests/run-tests.js",
+    "test": "node tests/run-tests.js && node --test tests/pages.test.js",
     "clasp:login": "npx @google/clasp login",
     "clasp:push": "npx @google/clasp push",
     "clasp:pull": "npx @google/clasp pull",

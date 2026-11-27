@@ -63,6 +63,7 @@
   /* -------------------- Adaptador de Transporte (GAS vs Demo Local) -------------------- */
 
   function callServer(methodName, payload) {
+    if (window.agendaPages) return window.agendaPages.call(methodName, payload);
     return new Promise(function (resolve, reject) {
       if (window.google && window.google.script && window.google.script.run) {
         var runner = window.google.script.run
@@ -1002,6 +1003,10 @@
   }
 
   bindEvents();
-  loadAgendaData({ silent: false });
+  if (window.agendaPages) {
+    window.agendaPages.start(loadAgendaData);
+  } else {
+    loadAgendaData({ silent: false });
+  }
 })();
 </script>

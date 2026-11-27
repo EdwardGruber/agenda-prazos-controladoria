@@ -29,6 +29,7 @@ data-real/
 
 # Dependências e arquivos temporários
 node_modules/
+dist/
 npm-debug.log*
 .DS_Store
 Thumbs.db

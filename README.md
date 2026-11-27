@@ -8,7 +8,25 @@ Aplicação web em **Google Apps Script + HTML/CSS/JavaScript** conectada ao **G
 
 ---
 
-## Estrutura do Projeto
+## Uso pelo escritório
+
+A versão instalável usa o GitHub Pages para a interface e a conta Google de cada integrante para consultar e editar a planilha.
+
+### Publicar a versão instalável
+
+1. Prepare a planilha conforme a seção 2. Envie o código de `src/` ao Apps Script e configure as propriedades da seção 3, passos A a C.
+2. No Google Cloud, use um projeto padrão do escritório, ative a **Google Apps Script API** e vincule o mesmo número de projeto em **Configurações do projeto** no Apps Script. Configure a tela de consentimento OAuth e os escopos de `src/appsscript.json`. Para um aplicativo interno do Workspace, selecione o público interno. Em teste com público externo, cadastre os e-mails de teste.
+3. Crie um **ID do cliente OAuth** do tipo **Aplicativo da Web**. Em origens JavaScript autorizadas, inclua `https://edwardgruber.github.io`. Para testar localmente, inclua também `http://localhost:8080`.
+4. No Apps Script, use **Implantar → Nova implantação → Executável da API**. Autorize o público do escritório e copie o **ID da implantação**. O passo D, mais abaixo, serve para quem também quer usar a interface hospedada pelo Google.
+5. No repositório GitHub, em **Settings → Secrets and variables → Actions → Variables**, crie `GOOGLE_CLIENT_ID` e `APPS_SCRIPT_DEPLOYMENT_ID`. Esses identificadores fazem parte da interface pública. O ID da planilha fica nas propriedades do Apps Script.
+6. Em **Settings → Pages → Source**, selecione **GitHub Actions**. Envie as mudanças para `main` ou execute **Publicar agenda no GitHub Pages** na aba Actions. O fluxo testa o projeto e publica apenas o conteúdo gerado em `dist/`. Em atualizações do servidor, publique também a nova versão do executável no Apps Script.
+7. Abra `https://edwardgruber.github.io/agenda-prazos-controladoria/`, entre com a conta Google e confira a agenda com um editor e um leitor. No Android ou computador, use o comando de instalação do navegador. No iPhone, abra no Safari e escolha **Compartilhar → Adicionar à Tela de Início**.
+
+A consulta e a gravação precisam de internet. O aplicativo mantém o token de acesso e os registros apenas na memória da página. O botão **Sair** encerra a sessão local. O compartilhamento da planilha continua sob controle do escritório.
+
+Para conferir a versão estática local, execute `npm run build:pages` e `python -m http.server 8080 --directory dist`. Acesse `http://localhost:8080`. Para autenticação real, defina as duas variáveis acima no ambiente antes do build. Para explorar com dados fictícios, use `npm start` conforme a seção 1.
+
+## Estrutura do projeto
 
 ```text
 agenda-prazos-controladoria/
@@ -104,7 +122,6 @@ Opção 2 (vincular a um projeto já criado):
    - `SPREADSHEET_ID` = `<ID da cópia de trabalho no Google Planilhas>`
    - `SHEET_NAME` = `<Nome exato da aba de origem>`
    - `TIMEZONE` = `America/Sao_Paulo`
-   *(Opcional: em vez da tela de propriedades, você pode chamar `configurarPlanilhaControladoria("SEU_ID", "NOME_DA_ABA")` diretamente no editor.)*
 3. No editor, execute a função **`garantirIdsNaPlanilha`** uma vez para criar a coluna técnica **`ID_CONTROLE_APP`** ao final da planilha (coluna Q) para todas as linhas preenchidas, sem tocar nas colunas A a P nem na `Última atualização`.
 
 ### Passo D — Gerar o link compartilhado (Web App)

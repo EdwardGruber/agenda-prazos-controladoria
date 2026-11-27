@@ -4,7 +4,6 @@
  *
  * Para configurar a planilha real sem colocar IDs no código/Git:
  * 1. No editor do Apps Script, vá em Configurações do Projeto > Propriedades do script
- *    OU execute a função configurarPlanilhaControladoria(spreadsheetId, sheetName).
  * 2. Propriedades suportadas:
  *    - SPREADSHEET_ID: ID da planilha Google (opcional se o script estiver vinculado à própria planilha)
  *    - SHEET_NAME: Nome exato da aba de origem (ex.: "Prazos", "Controladoria")
@@ -70,29 +69,4 @@ function getAgendaConfig() {
     headerRow: HEADER_ROW_INDEX,
     firstDataRow: FIRST_DATA_ROW_INDEX
   };
-}
-
-/**
- * Helper administrativo para configurar a planilha de trabalho via ScriptProperties.
- * Execute uma vez pelo editor do Apps Script (sem salvar IDs reais no Git).
- *
- * @param {string} spreadsheetId ID da cópia de trabalho no Google Planilhas
- * @param {string} sheetName Nome da aba de origem
- */
-function configurarPlanilhaControladoria(spreadsheetId, sheetName) {
-  var props = PropertiesService.getScriptProperties();
-  var updates = {
-    TIMEZONE: DEFAULT_TIMEZONE,
-    ID_COLUMN_HEADER: DEFAULT_ID_HEADER
-  };
-
-  if (spreadsheetId && String(spreadsheetId).trim()) {
-    updates.SPREADSHEET_ID = String(spreadsheetId).trim();
-  }
-  if (sheetName && String(sheetName).trim()) {
-    updates.SHEET_NAME = String(sheetName).trim();
-  }
-
-  props.setProperties(updates, false);
-  return getAgendaConfig();
 }
