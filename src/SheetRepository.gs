@@ -135,6 +135,13 @@ function resolveUserAccess(spreadsheet, sheet) {
     }
   }
 
+  // O Drive pode não listar o editor individual quando o acesso vem de um grupo.
+  if (!canEditFile && email) {
+    try {
+      canEditFile = sheet.getRange(FIRST_DATA_ROW_INDEX, AGENDA_COLUMNS.ULTIMA_ATUALIZACAO).canEdit();
+    } catch (rangeErr) { canEditFile = false; }
+  }
+
   // 3) Verifica se há proteção de aba que impeça edição pelo usuário atual
   var blockedByProtection = false;
   if (canEditFile && sheet && typeof sheet.getProtections === 'function') {
@@ -318,11 +325,16 @@ function fetchAgendaSnapshot() {
 
   var validationOptions = readValidationDropdownOptions(sheet, lastRow);
   var optionsCatalog = buildOptionsCatalog(records, validationOptions);
+  var managedOptions = readManagedOptions_(target);
+  var history = readHistory_(spreadsheet);
+  records.forEach(function (record) { record.history = history[record.id] || []; });
 
   return {
     ok: true,
     records: records,
     options: optionsCatalog,
+    managedOptions: Object.assign({}, optionsCatalog, managedOptions),
+    editingVersion: 2,
     userAccess: userAccess,
     meta: {
       spreadsheetName: spreadsheet.getName(),
@@ -516,7 +528,7 @@ function saveRecordUpdate(payload) {
     var liveRecord = mapSheetRowToRecord(liveRawRow, liveDisplayRow, targetRowIndex, idColIndex, config.timezone);
 
     // 3) Verificação de conflito de edição simultânea
-    if (liveRecord.version !== payload.expectedVersion) {
+    if (liveRecord.version !== payload.expectedVersion || (needsIdBackfill && liveRecord.id)) {
       return {
         ok: false,
         code: 'CONFLICT',
@@ -535,34 +547,9 @@ function saveRecordUpdate(payload) {
       };
     }
 
-    // 5) Se o registro ainda não tinha ID estável, cria a coluna técnica e grava o ID agora
-    if (needsIdBackfill) {
-      if (idColIndex === -1) {
-        idColIndex = Math.max(MIN_TECHNICAL_COL_INDEX, lastCol + 1);
-        sheet.getRange(HEADER_ROW_INDEX, idColIndex).setValue(config.idColumnHeader);
-        lastCol = Math.max(lastCol, idColIndex);
-      }
-      var generatedId = generateStableRecordId();
-      sheet.getRange(targetRowIndex, idColIndex).setValue(generatedId);
-    }
-
-    // 6) Gravação seletiva: altera SOMENTE as células editadas + Última atualização
-    //    Preserva fórmulas, formatação, coluna A ("3"), datas e listas suspensas.
-    try {
-      for (var d = 0; d < diffs.length; d++) {
-        sheet.getRange(targetRowIndex, diffs[d].col).setValue(diffs[d].after);
-      }
-
-      var savedAt = formatTimestampBr(new Date(), config.timezone);
-      sheet.getRange(targetRowIndex, AGENDA_COLUMNS.ULTIMA_ATUALIZACAO).setValue(savedAt);
-      SpreadsheetApp.flush();
-    } catch (writeErr) {
-      return {
-        ok: false,
-        code: 'FORBIDDEN',
-        message: 'A planilha recusou a gravação. Verifique se você possui permissão de edição nesta aba.'
-      };
-    }
+    var savedAt = formatTimestampBr(new Date(), config.timezone);
+    var recordId = liveRecord.id || generateStableRecordId();
+    idColIndex = writeAgendaEvent_(target, config, targetRowIndex, idColIndex, recordId, diffs, userAccess, savedAt, 'Alteração', needsIdBackfill);
 
     // 7) Relê a linha confirmada diretamente da planilha para devolver o estado autoritativo
     var refreshedLastCol = Math.max(sheet.getLastColumn(), lastCol, idColIndex > 0 ? idColIndex : AGENDA_COLUMNS.OBSERVACAO_P);
@@ -571,6 +558,7 @@ function saveRecordUpdate(payload) {
     var updatedDisplay = updatedRange.getDisplayValues()[0];
     var updatedRecord = mapSheetRowToRecord(updatedRaw, updatedDisplay, targetRowIndex, idColIndex, config.timezone);
 
+    updatedRecord.history = readHistory_(spreadsheet)[recordId] || [];
     return {
       ok: true,
       record: updatedRecord,

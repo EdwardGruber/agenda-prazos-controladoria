@@ -440,6 +440,47 @@ test('10. Servidor demo local responde HTML com banner visível e endpoints RPC 
 /* =========================================================================
  * Runner
  * ========================================================================= */
+test('Cadastro, repetição do pedido e histórico por usuário', () => {
+  const env = createGasRuntime();
+  const id = 'PRZ-' + require('node:crypto').randomUUID();
+  const request = { recordId: id, changes: { numeroProcesso: '000015', tribunal: 'TJ', tipo: 'Petição', dataFatal: '2027-01-19', proximosPassos: 'Conferir\nProtocolar' } };
+  const first = env.api.apiCreateRecord(request).record;
+  assert.equal(first.numeroProcesso, '000015');
+  assert.equal(first.dataFatal.iso, '2027-01-19');
+  assert.equal(first.history.length, 1);
+  assert.equal(first.history[0].email, env.runtime.currentUser.email);
+  env.api.apiCreateRecord(request);
+  env.setActiveUser('colega@escritorio-exemplo.local', 'EDIT');
+  const saved = env.api.apiSaveRecord({ recordId: id, expectedVersion: first.version, changes: { cliente: 'Cliente B', dataFatal: '', proxINVALID: 'x' } });
+  assert.equal(saved.ok, false);
+  const updated = env.api.apiSaveRecord({ recordId: id, expectedVersion: first.version, changes: { cliente: 'Cliente B', dataFatal: '', proximosPassos: 'Redigir peça' } });
+  assert.equal(updated.ok, true);
+  const records = env.api.apiGetAgendaData().records.filter(r => r.id === id);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].dataFatal.iso, null);
+  assert.equal(records[0].proximosPassos, 'Redigir peça');
+  assert.equal(records[0].history.length, 2);
+  assert.equal(records[0].history[1].email, 'colega@escritorio-exemplo.local');
+  assert.equal(records[0].history[1].action, 'Alteração');
+});
+
+test('Opções excluídas permanecem nos registros antigos e leitores não alteram listas ou cadastram', () => {
+  const env = createGasRuntime();
+  const snap = env.api.apiGetAgendaData();
+  for (const key of ['responsavel', 'priorizacao']) {
+    const original = snap.records.find(r => r[key])[key];
+    env.api.apiChangeOption({ key, name: original, action: 'remove' });
+    env.api.apiChangeOption({ key, name: 'Nova opção', action: 'add' });
+    const after = env.api.apiGetAgendaData();
+    assert.ok(after.managedOptions[key].includes('Nova opção'));
+    assert.ok(!after.managedOptions[key].includes(original));
+    assert.ok(after.records.some(r => r[key] === original));
+  }
+  env.setActiveUser('consulta@escritorio-exemplo.local', 'VIEW');
+  assert.throws(() => env.api.apiChangeOption({ key: 'responsavel', name: 'Teste', action: 'add' }), /editores/);
+  assert.throws(() => env.api.apiCreateRecord({}), /editores/);
+});
+
 (async function main() {
   let passed = 0;
   let failed = 0;

@@ -393,7 +393,8 @@ function computeEditableDiff(liveRecord, proposedChanges) {
     if (!Object.prototype.hasOwnProperty.call(proposedChanges, field)) {
       continue;
     }
-    var beforeVal = String(liveRecord[field] || '').trim();
+    var original = liveRecord[field];
+    var beforeVal = EDITABLE_FIELD_MAP[field].date && original ? original.iso || original.raw || '' : String(original || '').trim();
     var afterVal = String(proposedChanges[field] === null || proposedChanges[field] === undefined ? '' : proposedChanges[field]).trim();
     if (beforeVal !== afterVal) {
       diffs.push({
@@ -435,7 +436,12 @@ function validateUpdatePayload(payload) {
       return { valid: false, message: 'Campo não permitido para edição: ' + key };
     }
     var raw = payload.changes[key];
-    sanitizedChanges[key] = raw === null || raw === undefined ? '' : String(raw).trim();
+    var value = raw === null || raw === undefined ? '' : String(raw).trim();
+    if (key === 'numeroProcesso' && !value) return { valid: false, message: 'Informe o número do processo.' };
+    if (EDITABLE_FIELD_MAP[key].date && value && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !parseSheetDate(value, value, DEFAULT_TIMEZONE).iso)) {
+      return { valid: false, message: 'Data inválida em ' + EDITABLE_FIELD_MAP[key].label };
+    }
+    sanitizedChanges[key] = value;
   }
 
   if (Object.prototype.hasOwnProperty.call(sanitizedChanges, 'protocolado')) {

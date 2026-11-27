@@ -26,6 +26,10 @@ A consulta e a gravação precisam de internet. O aplicativo mantém o token de 
 
 Para conferir a versão estática local, execute `npm run build:pages` e `python -m http.server 8080 --directory dist`. Acesse `http://localhost:8080`. Para autenticação real, defina as duas variáveis acima no ambiente antes do build. Para explorar com dados fictícios, use `npm start` conforme a seção 1.
 
+### Atualizar uma agenda já publicada
+
+No mesmo projeto Google Cloud do login, ative **Google Sheets API**. O manifesto já declara o serviço avançado Sheets v4. Atualize o projeto Apps Script com os arquivos de `src/`, incluindo `Management.gs` e `appsscript.json`. Em **Implantar → Gerenciar implantações**, edite o **Executável da API** existente e selecione **Nova versão → Implantar** para manter o mesmo identificador. Publique a interface pelo fluxo GitHub Pages. A planilha atual e os IDs existentes podem ser usados diretamente.
+
 ## Estrutura do projeto
 
 ```text
@@ -139,7 +143,8 @@ Opção 2 (vincular a um projeto já criado):
 ## Regras de Segurança e Integridade Implementadas
 
 - **Pendentes de conferência:** registros com `Data fatal` anterior à data consultada e `Protocolado = Não` são sinalizados como *Pendente de conferência* — a passagem da data, sozinha, não é tratada como perda de prazo.
-- **Gravação seletiva:** somente as células realmente editadas (`Próximos passos`, `Responsável`, `Priorização`, `Observação (M)`, `Observação (P)`, `Protocolado`) e `Última atualização` são gravadas, preservando a coluna A (`"3"` / `"-"`), as quatro datas independentes, fórmulas, formatação e listas suspensas.
+- Editores podem cadastrar processos, editar os campos de identificação e as quatro datas e escrever na coluna Próximos passos. O botão Gerenciar listas permite adicionar ou excluir responsáveis e prioridades. A exclusão preserva os valores dos registros anteriores.
+- A partir desta versão, cada criação e edição feita pelo app grava data, e-mail da sessão, ação e campos modificados na aba **Histórico da Agenda**, criada automaticamente na primeira gravação. O histórico também aparece no detalhe do processo. Os dados e o evento são gravados juntos usando uma atualização em lote do Google Sheets.
 - **Identificador estável (`ID_CONTROLE_APP`):** suporta múltiplos prazos do mesmo processo e reordenações da planilha sem gravar na linha errada.
 - **Controle de concorrência:** utiliza `LockService` e verificação de versão do registro antes de gravar; se outro colega alterou a linha, o salvamento é interrompido com alerta de conflito e botão para recarregar os dados atuais.
 - **Segurança de credenciais:** `.clasp.json`, `.clasprc.json`, `.env*` e arquivos `.xlsx` estão bloqueados no `.gitignore`.

@@ -38,6 +38,8 @@ window.google = {
           apiSaveRecord: function (payload) {
             invoke('apiSaveRecord', payload, successCb, failureCb);
           },
+          apiCreateRecord: function (payload) { invoke('apiCreateRecord', payload, successCb, failureCb); },
+          apiChangeOption: function (payload) { invoke('apiChangeOption', payload, successCb, failureCb); },
           apiEnsureStableIds: function () {
             invoke('apiEnsureStableIds', undefined, successCb, failureCb);
           }
@@ -112,7 +114,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/rpc') {
       const body = await readJsonBody(req);
       const method = body.method;
-      const allowed = ['apiGetAgendaData', 'apiSaveRecord', 'apiEnsureStableIds'];
+      const allowed = ['apiGetAgendaData', 'apiSaveRecord', 'apiEnsureStableIds', 'apiCreateRecord', 'apiChangeOption'];
 
       if (!allowed.includes(method) || typeof runtime.api[method] !== 'function') {
         sendJson(res, 400, { ok: false, code: 'BAD_METHOD', message: 'Método inválido: ' + method });

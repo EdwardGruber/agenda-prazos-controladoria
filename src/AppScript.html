@@ -3,6 +3,14 @@
   'use strict';
 
   var EDITABLE_FIELDS = [
+    { key: 'numeroProcesso', elId: 'edit_numeroProcesso', label: 'Número do processo', extended: true },
+    { key: 'cliente', elId: 'edit_cliente', label: 'Cliente', extended: true },
+    { key: 'tribunal', elId: 'edit_tribunal', label: 'Tribunal', extended: true },
+    { key: 'tipo', elId: 'edit_tipo', label: 'Tipo', extended: true },
+    { key: 'fimDoPrazo', elId: 'edit_fimDoPrazo', label: 'Fim do prazo', extended: true, date: true },
+    { key: 'prazoLimiteJuntada', elId: 'edit_prazoLimiteJuntada', label: 'Limite para juntada', extended: true, date: true },
+    { key: 'dataFatal', elId: 'edit_dataFatal', label: 'Data fatal', extended: true, date: true },
+    { key: 'dataJuntada', elId: 'edit_dataJuntada', label: 'Data da juntada', extended: true, date: true },
     { key: 'proximosPassos', elId: 'editProximosPassos', label: 'Próximos passos' },
     { key: 'responsavel', elId: 'editResponsavel', label: 'Responsável' },
     { key: 'priorizacao', elId: 'editPriorizacao', label: 'Priorização' },
@@ -346,15 +354,14 @@
     populateSelect(els.filterTipo, state.options.tipo || [], 'Todos', state.filters.tipo);
     populateSelect(els.filterProtocolado, state.options.protocolado || [], 'Todos', state.filters.protocolado);
 
-    var datalistHtml = (state.options.responsavel || []).map(function (name) {
-      return '<option value="' + escapeHtml(name) + '"></option>';
-    }).join('');
-    els.responsavelDatalist.innerHTML = datalistHtml;
   }
 
   /* -------------------- Renderização Principal -------------------- */
 
   function renderHeaderAndDemoBanner() {
+    ['newRecord', 'manageLists'].forEach(function (id) {
+      document.getElementById(id).classList.toggle('hidden', !state.userAccess.canEdit || !state.extended);
+    });
     if (state.meta.isDemo) {
       els.demoBanner.classList.remove('hidden');
       els.demoProfileSelect.value = state.userAccess.canEdit ? 'EDITOR' : 'VIEWER';
@@ -527,7 +534,7 @@
               : '') +
           '</td>' +
           '<td class="col-passos"><div class="passos-preview" title="' + escapeHtml(rec.proximosPassos || '') + '">' +
-            escapeHtml(rec.proximosPassos || '') +
+            (state.userAccess.canEdit ? '<button type="button" data-steps class="steps-edit">' + escapeHtml(rec.proximosPassos || 'Escrever próximos passos') + '</button>' : escapeHtml(rec.proximosPassos || '')) +
           '</div></td>' +
           '<td>' +
             (rec.protocolado
@@ -565,6 +572,7 @@
         break;
       }
     }
+    if (key === null && state.userAccess.canEdit && state.extended) rec = { creating: true, draftId: 'PRZ-' + crypto.randomUUID() };
     if (!rec) return;
 
     state.selectedRecordKey = key;
@@ -574,7 +582,7 @@
     els.conflictPanel.classList.add('hidden');
     els.confirmSavePanel.classList.add('hidden');
 
-    els.modalTitle.textContent = rec.numeroProcesso || 'Registro sem número de processo';
+    els.modalTitle.textContent = rec.creating ? 'Novo processo' : rec.numeroProcesso || 'Registro sem número de processo';
     els.modalSubtitle.textContent = (rec.cliente || 'Cliente não informado') + ' • ' + (rec.tribunal || 'Tribunal não informado');
 
     els.detProcesso.textContent = rec.numeroProcesso || '';
@@ -595,8 +603,15 @@
 
     // Popula campos editáveis
     els.editProximosPassos.value = rec.proximosPassos || '';
-    els.editResponsavel.value = rec.responsavel || '';
-    populateEditSelectWithCurrent(els.editPriorizacao, state.options.priorizacao || [], rec.priorizacao || '');
+    populateEditSelectWithCurrent(els.editResponsavel, state.managed.responsavel || [], rec.responsavel || '');
+    populateEditSelectWithCurrent(els.editPriorizacao, state.managed.priorizacao || [], rec.priorizacao || '');
+    EDITABLE_FIELDS.filter(function (f) { return f.extended; }).forEach(function (f) {
+      document.getElementById(f.elId).value = f.date ? (rec[f.key] || {}).iso || '' : rec[f.key] || '';
+    });
+    var history = rec.history || [];
+    document.getElementById('recordHistory').innerHTML = history.length ? history.slice().reverse().map(function (e) {
+      return '<li>' + escapeHtml([e.at, e.action, e.email, e.fields].join(' · ')) + '</li>';
+    }).join('') : '<li>Sem histórico registrado pelo aplicativo.</li>';
     populateEditSelectWithCurrent(els.editProtocolado, state.options.protocolado || ['Não', 'Sim'], rec.protocolado || '');
     els.editObservacaoM.value = rec.observacaoM || '';
     els.editObservacaoP.value = rec.observacaoP || '';
@@ -605,7 +620,7 @@
     els.viewerNotice.classList.toggle('hidden', canEdit);
     for (var f = 0; f < EDITABLE_FIELDS.length; f++) {
       var inputEl = document.getElementById(EDITABLE_FIELDS[f].elId);
-      if (inputEl) inputEl.disabled = !canEdit;
+      if (inputEl) inputEl.disabled = !canEdit || (EDITABLE_FIELDS[f].extended && !state.extended);
     }
 
     els.btnReviewSave.classList.toggle('hidden', !canEdit);
@@ -631,7 +646,9 @@
     for (var i = 0; i < EDITABLE_FIELDS.length; i++) {
       var field = EDITABLE_FIELDS[i];
       var inputEl = document.getElementById(field.elId);
-      var beforeVal = String(state.selectedRecord[field.key] || '').trim();
+      if (inputEl.disabled) continue;
+      var original = state.selectedRecord[field.key];
+      var beforeVal = field.date ? (original || {}).iso || '' : String(original || '').trim();
       var afterVal = String((inputEl && inputEl.value) || '').trim();
       if (beforeVal !== afterVal) {
         diffs.push({
@@ -663,6 +680,11 @@
       return;
     }
 
+    if (state.selectedRecord.creating && !document.getElementById('edit_numeroProcesso').value.trim()) {
+      showToast('Informe o número do processo.', 'warn');
+      document.getElementById('edit_numeroProcesso').focus();
+      return;
+    }
     state.pendingDiffs = diffs;
     var rec = state.selectedRecord;
 
@@ -714,7 +736,9 @@
     els.btnExecuteSave.textContent = 'Gravando na planilha...';
     els.modalFooterStatus.textContent = 'Aguardando confirmação da planilha...';
 
-    callServer('apiSaveRecord', payload)
+    var creating = state.selectedRecord.creating;
+    if (creating) payload.recordId = state.selectedRecord.draftId;
+    callServer(creating ? 'apiCreateRecord' : 'apiSaveRecord', payload)
       .then(function (res) {
         state.isSaving = false;
         els.btnExecuteSave.disabled = false;
@@ -739,6 +763,7 @@
 
           renderAgenda();
           openRecordModal(recordKey(saved));
+          loadAgendaData({ silent: true });
           els.modalFooterStatus.textContent = 'Salvo e confirmado na planilha em ' + (res.savedAt || saved.ultimaAtualizacao) + '.';
           showToast('Alterações confirmadas na planilha (' + saved.numeroProcesso + ').', 'success');
           return;
@@ -810,6 +835,8 @@
 
         state.records = res.records || [];
         state.options = res.options || state.options;
+        state.managed = res.managedOptions || state.options;
+        state.extended = res.editingVersion >= 2;
         state.userAccess = res.userAccess || state.userAccess;
         state.meta = res.meta || state.meta;
 
@@ -846,6 +873,35 @@
   /* -------------------- Bind de Eventos -------------------- */
 
   function bindEvents() {
+    var get = function (id) { return document.getElementById(id); };
+    var dialog = get('catalogDialog');
+    var busy = false;
+    function renderCatalog() {
+      var values = state.managed[get('catalogKey').value] || [];
+      get('catalogItems').innerHTML = values.map(function (name) {
+        return '<li>' + escapeHtml(name) + ' <button type="button" class="btn btn-sm" data-remove="' + escapeHtml(name) + '">Excluir</button></li>';
+      }).join('');
+    }
+    function changeOption(action, name) {
+      if (busy || !name.trim()) return;
+      busy = true;
+      get('catalogStatus').textContent = 'Salvando…';
+      callServer('apiChangeOption', { key: get('catalogKey').value, action: action, name: name })
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.message);
+          state.managed[res.key] = res.options;
+          get('catalogName').value = '';
+          renderCatalog();
+          get('catalogStatus').textContent = 'Lista atualizada.';
+        }).catch(function (err) { get('catalogStatus').textContent = err.message; })
+        .finally(function () { busy = false; });
+    }
+    get('manageLists').onclick = function () { renderCatalog(); get('catalogStatus').textContent = ''; dialog.showModal(); };
+    get('closeCatalog').onclick = function () { dialog.close(); };
+    get('catalogKey').onchange = renderCatalog;
+    get('catalogForm').onsubmit = function (e) { e.preventDefault(); changeOption('add', get('catalogName').value); };
+    get('catalogItems').onclick = function (e) { if (e.target.hasAttribute('data-remove')) changeOption('remove', e.target.dataset.remove); };
+    get('newRecord').onclick = function () { openRecordModal(null); get('edit_numeroProcesso').focus(); };
     els.btnRefresh.addEventListener('click', function () {
       loadAgendaData({ silent: false });
     });
@@ -936,9 +992,29 @@
       var btn = e.target.closest('[data-open-key]');
       var row = e.target.closest('tr[data-record-key]');
       var key = (btn && btn.getAttribute('data-open-key')) || (row && row.getAttribute('data-record-key'));
-      if (key) {
-        openRecordModal(key);
+      if (!key) return;
+      var cell = e.target.closest('.col-passos');
+      if (cell && state.userAccess.canEdit) {
+        if (e.target.closest('[data-steps]')) {
+          var record = state.records.find(function (r) { return recordKey(r) === key; });
+          cell.innerHTML = '<textarea aria-label="Próximos passos"></textarea><button class="btn btn-sm" data-review-steps>Revisar</button> <button class="btn btn-sm" data-cancel-steps>Cancelar</button>';
+          var input = cell.querySelector('textarea');
+          input.value = record.proximosPassos || '';
+          input.focus();
+          return;
+        }
+        if (e.target.closest('[data-review-steps]')) {
+          var draft = cell.querySelector('textarea').value;
+          openRecordModal(key);
+          els.editProximosPassos.value = draft;
+          onEditFormChanged();
+          showPreSaveConfirmation();
+          return;
+        }
+        if (e.target.closest('[data-cancel-steps]')) { renderAgenda(); return; }
+        if (e.target.closest('textarea')) return;
       }
+      openRecordModal(key);
     });
 
     els.btnCloseModal.addEventListener('click', closeRecordModal);

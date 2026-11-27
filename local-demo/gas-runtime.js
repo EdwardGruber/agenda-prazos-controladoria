@@ -141,6 +141,10 @@ class MockSheet {
     this._writeLog = [];
   }
 
+  getSheetId() { return this.id || 0; }
+  getMaxRows() { return Math.max(1000, this.rows.length); }
+  getMaxColumns() { return Math.max(26, this.getLastColumn()); }
+
   getName() {
     return this.name;
   }
@@ -249,6 +253,8 @@ function createGasRuntime(options = {}) {
   runtime.spreadsheets[spreadsheetId] = spreadsheet;
 
   function loadInitialData(referenceDateIso) {
+    spreadsheet.sheets = [sheet];
+    delete runtime.properties['LISTAS_' + spreadsheetId + '_0'];
     sheet.rows = [];
     sheet._writeLog = [];
 
@@ -321,6 +327,37 @@ function createGasRuntime(options = {}) {
       },
       flush() {}
     },
+    Sheets: { Spreadsheets: {
+      batchUpdate(batch, id) {
+        if (id !== spreadsheetId) throw new Error('Planilha inválida.');
+        sheet._assertWritable();
+        for (const req of batch.requests) {
+          if (req.addSheet) {
+            const props = req.addSheet.properties;
+            const log = new MockSheet(spreadsheet, props.title);
+            log.id = props.sheetId;
+            spreadsheet.sheets.push(log);
+            continue;
+          }
+          if (req.appendDimension) continue;
+          const write = req.updateCells || req.appendCells;
+          const start = write.start || write;
+          const target = spreadsheet.sheets.find(s => s.getSheetId() === start.sheetId);
+          const first = req.appendCells ? target.rows.length : start.rowIndex;
+          write.rows.forEach((row, ri) => row.values.forEach((spec, ci) => {
+            const range = target.getRange(first + ri + 1, (start.columnIndex || 0) + ci + 1);
+            const entered = spec.userEnteredValue || {};
+            const value = entered.numberValue === undefined ? entered.stringValue || '' :
+              new Date((entered.numberValue - 25569) * 86400000 + 12 * 3600000);
+            range.setValue(value);
+            if (write.fields.includes('dataValidation')) {
+              const cell = target._getCell(range.startRow, range.startCol);
+              cell.validation = spec.dataValidation ? createValidationRule(spec.dataValidation.condition.values.map(v => v.userEnteredValue)) : null;
+            }
+          }));
+        }
+      }
+    } },
     DriveApp: {
       Permission: DriveAppPermission,
       getFileById(id) {
@@ -391,7 +428,7 @@ function createGasRuntime(options = {}) {
 
   vm.createContext(sandbox);
 
-  const gsFiles = ['Config.gs', 'Domain.gs', 'SheetRepository.gs', 'Code.gs'];
+  const gsFiles = ['Config.gs', 'Domain.gs', 'SheetRepository.gs', 'Management.gs', 'Code.gs'];
   for (const file of gsFiles) {
     const code = fs.readFileSync(path.join(SRC_DIR, file), 'utf8');
     vm.runInContext(code, sandbox, { filename: file });

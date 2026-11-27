@@ -35,6 +35,8 @@
       </div>
     </div>
     <div class="topbar-actions">
+      <button id="newRecord" type="button" class="btn btn-topbar hidden">Novo processo</button>
+      <button id="manageLists" type="button" class="btn btn-topbar hidden">Gerenciar listas</button>
       <span id="userAccessBadge" class="access-badge viewer">Verificando acesso...</span>
       <button type="button" id="btnInitIds" class="btn btn-warn btn-sm hidden">Inicializar IDs estáveis</button>
       <button type="button" id="btnRefresh" class="btn btn-topbar">Atualizar da planilha</button>
@@ -246,14 +248,21 @@
         <h3 class="section-title">Atualização da Controladoria</h3>
         <form id="editRecordForm" onsubmit="return false;">
           <div class="edit-grid">
+            <div class="field-group"><label for="edit_numeroProcesso">Número do processo</label><input type="text" id="edit_numeroProcesso"></div>
+            <div class="field-group"><label for="edit_cliente">Cliente</label><input type="text" id="edit_cliente"></div>
+            <div class="field-group"><label for="edit_tribunal">Tribunal</label><input type="text" id="edit_tribunal"></div>
+            <div class="field-group"><label for="edit_tipo">Tipo</label><input type="text" id="edit_tipo"></div>
+            <div class="field-group"><label for="edit_fimDoPrazo">Fim do prazo</label><input type="date" id="edit_fimDoPrazo"></div>
+            <div class="field-group"><label for="edit_prazoLimiteJuntada">Limite para juntada</label><input type="date" id="edit_prazoLimiteJuntada"></div>
+            <div class="field-group"><label for="edit_dataFatal">Data fatal</label><input type="date" id="edit_dataFatal"></div>
+            <div class="field-group"><label for="edit_dataJuntada">Data da juntada</label><input type="date" id="edit_dataJuntada"></div>
             <div class="field-group span-2">
               <label for="editProximosPassos">Próximos passos (Col. G)</label>
               <textarea id="editProximosPassos"></textarea>
             </div>
             <div class="field-group">
               <label for="editResponsavel">Responsável (Col. O)</label>
-              <input type="text" id="editResponsavel" list="responsavelDatalist" autocomplete="off">
-              <datalist id="responsavelDatalist"></datalist>
+              <select id="editResponsavel"></select>
             </div>
             <div class="field-group">
               <label for="editPriorizacao">Priorização (Col. H)</label>
@@ -278,6 +287,9 @@
           </div>
         </form>
 
+        <h3 class="section-title">Histórico do processo</h3>
+        <ul id="recordHistory"></ul>
+
         <!-- Painel de Confirmação Antes de Gravar -->
         <div id="confirmSavePanel" class="confirm-panel hidden">
           <h4>Confirmar gravação na planilha</h4>
@@ -300,6 +312,15 @@
     </div>
   </div>
 
+  <dialog id="catalogDialog" aria-labelledby="catalogTitle">
+    <h2 id="catalogTitle">Gerenciar listas</h2>
+    <div class="field-group"><label for="catalogKey">Lista</label><select id="catalogKey"><option value="responsavel">Responsáveis</option><option value="priorizacao">Níveis de priorização</option></select></div>
+    <ul id="catalogItems"></ul>
+    <form id="catalogForm"><label for="catalogName">Nova opção</label>
+      <input id="catalogName" maxlength="120" required><button class="btn btn-primary">Adicionar</button>
+    </form>
+    <p id="catalogStatus" role="status"></p><button class="btn" id="closeCatalog">Fechar</button>
+  </dialog>
   <!-- Toasts -->
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 

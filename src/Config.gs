@@ -31,6 +31,14 @@ var AGENDA_COLUMNS = Object.freeze({
 });
 
 var EDITABLE_FIELD_MAP = Object.freeze({
+  numeroProcesso: { col: 5, label: 'Número do processo' },
+  cliente: { col: 6, label: 'Cliente' },
+  tribunal: { col: 2, label: 'Tribunal' },
+  tipo: { col: 9, label: 'Tipo' },
+  fimDoPrazo: { col: 3, label: 'Fim do prazo', date: true },
+  prazoLimiteJuntada: { col: 4, label: 'Limite para juntada', date: true },
+  dataFatal: { col: 11, label: 'Data fatal', date: true },
+  dataJuntada: { col: 12, label: 'Data da juntada', date: true },
   proximosPassos: { col: AGENDA_COLUMNS.PROXIMOS_PASSOS, label: 'Próximos passos' },
   responsavel: { col: AGENDA_COLUMNS.RESPONSAVEL, label: 'Responsável' },
   priorizacao: { col: AGENDA_COLUMNS.PRIORIZACAO, label: 'Priorização' },
