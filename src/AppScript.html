@@ -125,6 +125,13 @@
       .replace(/'/g, '&#39;');
   }
 
+  function isCompleteRecord(rec) {
+    if (!rec) return false;
+    var proc = String(rec.numeroProcesso || '').trim();
+    var cli = String(rec.cliente || '').trim();
+    return Boolean(proc && cli);
+  }
+
   function recordKey(rec) {
     return rec.id || rec.tempRowKey;
   }
@@ -1287,10 +1294,17 @@
       return;
     }
 
-    if (state.selectedRecord.creating && !document.getElementById('edit_numeroProcesso').value.trim()) {
-      showToast('Informe o número do processo.', 'warn');
-      document.getElementById('edit_numeroProcesso').focus();
-      return;
+    if (state.selectedRecord.creating) {
+      if (!document.getElementById('edit_numeroProcesso').value.trim()) {
+        showToast('Informe o número do processo.', 'warn');
+        document.getElementById('edit_numeroProcesso').focus();
+        return;
+      }
+      if (!document.getElementById('edit_cliente').value.trim()) {
+        showToast('Informe o cliente do processo.', 'warn');
+        document.getElementById('edit_cliente').focus();
+        return;
+      }
     }
     state.pendingDiffs = diffs;
     var rec = state.selectedRecord;
@@ -1461,7 +1475,7 @@
           return;
         }
 
-        state.records = res.records || [];
+        state.records = (res.records || []).filter(isCompleteRecord);
         state.options = res.options || state.options;
         state.managed = res.managedOptions || state.options;
         state.extended = res.editingVersion >= 2;
