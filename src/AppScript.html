@@ -136,8 +136,10 @@
     return rec.id || rec.tempRowKey;
   }
 
+  // Vazio conta como "Não": a tabela já exibe assim e o prazo vencido sem protocolo precisa de conferência.
   function isProtocoladoNao(val) {
-    return normalizeText(val) === 'nao';
+    var v = normalizeText(val);
+    return v === 'nao' || v === '';
   }
 
   function isProtocoladoSim(val) {
@@ -183,7 +185,10 @@
     if (state.filters.tribunal && normalizeText(record.tribunal) !== normalizeText(state.filters.tribunal)) return false;
     if (state.filters.priorizacao && normalizeText(record.priorizacao) !== normalizeText(state.filters.priorizacao)) return false;
     if (state.filters.tipo && normalizeText(record.tipo) !== normalizeText(state.filters.tipo)) return false;
-    if (state.filters.protocolado && normalizeText(record.protocolado) !== normalizeText(state.filters.protocolado)) return false;
+    if (state.filters.protocolado) {
+      var wantsNao = isProtocoladoNao(state.filters.protocolado);
+      if (wantsNao ? !isProtocoladoNao(record.protocolado) : normalizeText(record.protocolado) !== normalizeText(state.filters.protocolado)) return false;
+    }
     return true;
   }
 
@@ -466,10 +471,13 @@
     }
   }
 
-  function renderAttentionBadgesHtml(cls) {
+  function renderAttentionBadgesHtml(cls, rec) {
     var parts = [];
+    if (rec && !isCompleteRecord(rec)) {
+      parts.push('<span class="badge badge-fatal" title="Falta o número do processo ou o cliente na planilha">Cadastro incompleto</span>');
+    }
     if (cls.isPendingReview) {
-      parts.push('<span class="badge badge-pending" title="Data fatal anterior à data consultada com Protocolado = Não">Pendente de conferência</span>');
+      parts.push('<span class="badge badge-pending" title="Data fatal anterior à data consultada com Protocolado = Não ou em branco">Pendente de conferência</span>');
     }
     if (cls.isFatalOnDate) {
       parts.push('<span class="badge badge-fatal">Fatal no dia</span>');
@@ -699,7 +707,7 @@
         ? ' style="--row-delay:' + (rowIdx * 36) + 'ms"'
         : '';
 
-      var attentionHtml = renderAttentionBadgesHtml(cls);
+      var attentionHtml = renderAttentionBadgesHtml(cls, rec);
       if (isJustCreated) {
         attentionHtml = attentionHtml.replace('<div class="badge-stack">', '<div class="badge-stack"><span class="badge badge-novo-proc">Novo</span>');
       }
@@ -1156,11 +1164,13 @@
 
   function renderAnalytics(refIso, animate) {
     if (!state.showAnalytics) return;
-    renderTimelineChart(state.records, refIso, animate);
-    renderResponsaveisChart(state.records, animate);
-    renderProtocoloDonut(state.records, animate);
-    renderPrioridadesChart(state.records, animate);
-    renderTribunaisChart(state.records, animate);
+    // Linhas incompletas ficam na agenda (com aviso), mas não entram nos gráficos.
+    var chartRecords = state.records.filter(isCompleteRecord);
+    renderTimelineChart(chartRecords, refIso, animate);
+    renderResponsaveisChart(chartRecords, animate);
+    renderProtocoloDonut(chartRecords, animate);
+    renderPrioridadesChart(chartRecords, animate);
+    renderTribunaisChart(chartRecords, animate);
   }
 
   /* -------------------- Modal de Detalhe, Edição, Confirmação e Conflito -------------------- */
@@ -1213,7 +1223,7 @@
     els.detDataJuntada.textContent = (rec.dataJuntada && rec.dataJuntada.display) || '';
 
     var cls = classifyForDate(rec, state.referenceDateIso || state.meta.todayIso);
-    els.detAttentionTags.innerHTML = renderAttentionBadgesHtml(cls);
+    els.detAttentionTags.innerHTML = renderAttentionBadgesHtml(cls, rec);
 
     // Popula campos editáveis
     els.editProximosPassos.value = rec.proximosPassos || '';
@@ -1475,7 +1485,7 @@
           return;
         }
 
-        state.records = (res.records || []).filter(isCompleteRecord);
+        state.records = res.records || [];
         state.options = res.options || state.options;
         state.managed = res.managedOptions || state.options;
         state.extended = res.editingVersion >= 2;
@@ -1636,7 +1646,7 @@
         document.querySelectorAll('[data-timeline-mode]').forEach(function (b) {
           b.classList.toggle('active', b === btn);
         });
-        renderTimelineChart(state.records, state.referenceDateIso || state.meta.todayIso, true);
+        renderTimelineChart(state.records.filter(isCompleteRecord), state.referenceDateIso || state.meta.todayIso, true);
       });
     });
 

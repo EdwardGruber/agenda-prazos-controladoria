@@ -142,7 +142,8 @@ Opção 2 (vincular a um projeto já criado):
 
 ## Regras de Segurança e Integridade Implementadas
 
-- **Pendentes de conferência:** registros com `Data fatal` anterior à data consultada e `Protocolado = Não` são sinalizados como *Pendente de conferência* — a passagem da data, sozinha, não é tratada como perda de prazo.
+- **Pendentes de conferência:** registros com `Data fatal` anterior à data consultada e `Protocolado = Não` ou em branco são sinalizados como *Pendente de conferência* — a passagem da data, sozinha, não é tratada como perda de prazo.
+- **Cadastro incompleto:** linhas sem número do processo ou sem cliente continuam na agenda com o aviso *Cadastro incompleto*, para que nenhum prazo suma da tela; elas ficam fora dos gráficos.
 - Editores podem cadastrar processos, editar os campos de identificação e as quatro datas e escrever na coluna Próximos passos. O botão Gerenciar listas permite adicionar ou excluir responsáveis e prioridades. A exclusão preserva os valores dos registros anteriores.
 - A partir desta versão, cada criação e edição feita pelo app grava data, e-mail da sessão, ação e campos modificados na aba **Histórico da Agenda**, criada automaticamente na primeira gravação. O histórico também aparece no detalhe do processo. Os dados e o evento são gravados juntos usando uma atualização em lote do Google Sheets.
 - **Identificador estável (`ID_CONTROLE_APP`):** suporta múltiplos prazos do mesmo processo e reordenações da planilha sem gravar na linha errada.

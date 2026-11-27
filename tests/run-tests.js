@@ -481,6 +481,48 @@ test('Opções excluídas permanecem nos registros antigos e leitores não alter
   assert.throws(() => env.api.apiCreateRecord({}), /editores/);
 });
 
+// Extrai funções nomeadas de src/AppScript.html para testar a lógica da tela sem navegador.
+function loadFrontFunctions(names) {
+  const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'AppScript.html'), 'utf8');
+  const bodies = names.map((name) => {
+    const start = source.indexOf('function ' + name + '(');
+    assert.ok(start >= 0, 'Função ' + name + ' não encontrada em AppScript.html');
+    let depth = 0;
+    for (let i = source.indexOf('{', start); i < source.length; i++) {
+      if (source[i] === '{') depth++;
+      if (source[i] === '}' && --depth === 0) return source.slice(start, i + 1);
+    }
+    throw new Error('Função ' + name + ' sem fechamento');
+  });
+  const sandbox = {};
+  require('vm').runInNewContext(bodies.join('\n') + '\nthis.fns = {' + names.join(',') + '};', sandbox);
+  return sandbox.fns;
+}
+
+test('Prazo vencido com Protocolado em branco fica pendente na tela e no servidor', () => {
+  const env = createGasRuntime({ referenceDateIso: FIXED_TODAY });
+  const front = loadFrontFunctions(['normalizeText', 'isProtocoladoNao', 'classifyForDate']);
+  const yesterday = addDaysIso(FIXED_TODAY, -1);
+  const expected = { 'Não': true, '': true, '  ': true, 'Sim': false, 'N/A': false };
+  for (const [protocolado, pending] of Object.entries(expected)) {
+    const rec = { dataFatal: { iso: yesterday }, dataJuntada: { iso: null }, protocolado };
+    assert.strictEqual(env.api.classifyRecordForDate(rec, FIXED_TODAY).isPendingReview, pending, 'servidor: "' + protocolado + '"');
+    assert.strictEqual(front.classifyForDate(rec, FIXED_TODAY).isPendingReview, pending, 'tela: "' + protocolado + '"');
+  }
+});
+
+test('Linha sem cliente ou processo continua na agenda com aviso e fica fora dos gráficos', () => {
+  const source = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'AppScript.html'), 'utf8');
+  assert.ok(!/state\.records\s*=\s*\(res\.records[^;]*\.filter/.test(source), 'A carga não pode descartar registros');
+  const front = loadFrontFunctions(['isCompleteRecord', 'renderAttentionBadgesHtml']);
+  const fatalToday = { isPendingReview: false, isFatalOnDate: true, isJuntadaOnDate: false };
+  const semCliente = front.renderAttentionBadgesHtml(fatalToday, { numeroProcesso: '0001', cliente: '' });
+  assert.ok(semCliente.includes('Cadastro incompleto') && semCliente.includes('Fatal no dia'));
+  const completo = front.renderAttentionBadgesHtml(fatalToday, { numeroProcesso: '0001', cliente: 'Banco X' });
+  assert.ok(!completo.includes('Cadastro incompleto'));
+  assert.strictEqual(front.isCompleteRecord({ numeroProcesso: '0001', cliente: ' ' }), false);
+});
+
 (async function main() {
   let passed = 0;
   let failed = 0;

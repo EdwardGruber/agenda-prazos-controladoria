@@ -258,12 +258,21 @@ function isProtocoladoSim(protocolado) {
 }
 
 /**
+ * Ainda sem protocolo: "Não" ou célula vazia. Uma célula em branco não comprova o protocolo,
+ * então o prazo vencido continua pedindo conferência.
+ */
+function isAwaitingProtocol(protocolado) {
+  var value = normalizeText(protocolado);
+  return value === '' || value === 'nao';
+}
+
+/**
  * Classifica um registro em relação a uma data de referência (YYYY-MM-DD).
  *
  * Regras:
  * - Data fatal igual à data consultada -> Prazo fatal no dia
  * - Data da juntada igual à data consultada -> Juntada no dia
- * - Data fatal anterior à data consultada com Protocolado = "Não" -> Pendente de conferência
+ * - Data fatal anterior à data consultada com Protocolado = "Não" ou vazio -> Pendente de conferência
  *   (A passagem da data, sozinha, não comprova perda de prazo.)
  */
 function classifyRecordForDate(record, referenceDateIso) {
@@ -275,7 +284,7 @@ function classifyRecordForDate(record, referenceDateIso) {
   var isPendingReview = Boolean(
     fatalIso &&
     fatalIso < referenceDateIso &&
-    isProtocoladoNao(record.protocolado)
+    isAwaitingProtocol(record.protocolado)
   );
 
   var tags = [];
