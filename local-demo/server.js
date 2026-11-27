@@ -160,7 +160,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: Boolean(rowNum),
         message: rowNum
-          ? `Edição simultânea simulada no registro ${targetId} (Proc. 0004821-15.2025.8.26.0100, linha ${rowNum}). Abra esse registro e tente salvar sem atualizar para ver o alerta de conflito.`
+          ? `Edição simultânea simulada no registro ${targetId} (Proc. 0004821-67.2025.8.26.0100, linha ${rowNum}). Abra esse registro e tente salvar sem atualizar para ver o alerta de conflito.`
           : 'Registro não localizado para simulação.'
       });
       return;

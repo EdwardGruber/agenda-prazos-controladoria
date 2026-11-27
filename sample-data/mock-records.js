@@ -84,14 +84,14 @@ function buildSampleSheetRows(referenceDateIso) {
   const plus7 = addDaysIso(baseIso, 7);
 
   return [
-    // 1) Processo 0004821-15.2025.8.26.0100 — PRAZO 1 (Data fatal = hoje, objeto Date nativo)
+    // 1) Processo 0004821-67.2025.8.26.0100 — PRAZO 1 (Data fatal = hoje, objeto Date nativo)
     {
       values: [
         '-',
         'TJSP',
         isoToSheetDate(today),
         isoToSheetDate(tomorrow),
-        '0004821-15.2025.8.26.0100',
+        '0004821-67.2025.8.26.0100',
         'Metalúrgica Horizonte Ltda.',
         'Protocolar contestação revisional de cédula de crédito bancário',
         'Urgente',
@@ -111,14 +111,14 @@ function buildSampleSheetRows(referenceDateIso) {
         8: { format: { background: '#fee2e2' } }
       }
     },
-    // 2) MESMO PROCESSO 0004821-15.2025.8.26.0100 — PRAZO 2 (Juntada hoje + Protocolado = Não)
+    // 2) MESMO PROCESSO 0004821-67.2025.8.26.0100 — PRAZO 2 (Juntada hoje + Protocolado = Não)
     {
       values: [
         '-',
         'TJSP',
         isoToBrText(plus5, true),
         isoToBrText(today, true),
-        '0004821-15.2025.8.26.0100',
+        '0004821-67.2025.8.26.0100',
         'Metalúrgica Horizonte Ltda.',
         'Juntar procuração atualizada e comprovante de recolhimento de custas',
         'Alta',
@@ -140,7 +140,7 @@ function buildSampleSheetRows(referenceDateIso) {
         'TJRJ',
         isoToSheetDate(yesterday),
         '',
-        '0019302-44.2024.8.19.0001',
+        '0019302-70.2024.8.19.0001',
         'Carlos Eduardo Mendes',
         'Conferir protocolo da impugnação ao cumprimento de sentença no PJe',
         'Urgente',
@@ -162,7 +162,7 @@ function buildSampleSheetRows(referenceDateIso) {
         'TJMS',
         isoToBrText(threeDaysAgo, false),
         '',
-        '0802145-90.2025.8.12.0001',
+        '0802145-12.2025.8.12.0001',
         'Distribuidora Vale Verde S.A.',
         'Confirmar se houve renúncia expressa ao prazo recursal',
         'Alta',
@@ -184,7 +184,7 @@ function buildSampleSheetRows(referenceDateIso) {
         'TJSP',
         '',
         '',
-        '0000718-09.2025.8.26.0002',
+        '0000718-20.2025.8.26.0002',
         'Ana Paula Ferreira',
         'Elaborar manifestação sobre bloqueio SISBAJUD em conta salário',
         'Média',
@@ -206,7 +206,7 @@ function buildSampleSheetRows(referenceDateIso) {
         'TJMG',
         isoToSheetDate(today),
         isoToSheetDate(today),
-        '0009512-77.2025.8.13.0024',
+        '0009512-24.2025.8.13.0024',
         'Transportadora Atlântico Sul Ltda.',
         'Protocolo concluído — acompanhar despacho de liberação de veículo',
         'Baixa',
@@ -228,7 +228,7 @@ function buildSampleSheetRows(referenceDateIso) {
         'TJPR',
         isoToSheetDate(twoDaysAgo),
         '',
-        '0045120-33.2024.8.16.0001',
+        '0045120-08.2024.8.16.0001',
         'Supermercado Estrela do Sul Ltda.',
         'Aguardar intimação da parte contrária',
         'Baixa',
@@ -250,7 +250,7 @@ function buildSampleSheetRows(referenceDateIso) {
         'TJGO',
         isoToSheetDate(tomorrow),
         isoToSheetDate(plus3),
-        '0088210-12.2025.8.09.0051',
+        '0088210-71.2025.8.09.0051',
         'Agropecuária Serra Azul Ltda.',
         'Preparar apelação sobre capitalização de juros em CPR financeira',
         'Média',
@@ -294,7 +294,7 @@ function buildSampleSheetRows(referenceDateIso) {
         'TRF3',
         isoToSheetDate(plus7),
         isoToSheetDate(plus3),
-        '5001290-41.2025.4.03.6100',
+        '5001290-02.2025.4.03.6100',
         'Indústria Têxtil Bandeirantes S.A.',
         'Anexar contrato social consolidado e balanço patrimonial',
         'Baixa',

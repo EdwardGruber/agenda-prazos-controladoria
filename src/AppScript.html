@@ -146,6 +146,171 @@
     return normalizeText(val) === 'sim';
   }
 
+  /* -------------------- Dias úteis (feriados nacionais) -------------------- */
+  // Mesma lista de feriados do LB Hub (services/acordos/prazo.ts, modo nacional): feriados fixos
+  // mais Carnaval (segunda e terça), Sexta-feira Santa e Corpus Christi. Aqui as datas móveis saem
+  // da Páscoa, então a lista não acaba. Feriados estaduais, municipais e o recesso forense não entram.
+  function easterSundayUtc(year) {
+    // Algoritmo de Meeus/Jones/Butcher (calendário gregoriano).
+    var a = year % 19;
+    var b = Math.floor(year / 100);
+    var c = year % 100;
+    var d = Math.floor(b / 4);
+    var e = b % 4;
+    var f = Math.floor((b + 8) / 25);
+    var g = Math.floor((b - f + 1) / 3);
+    var h = (19 * a + b - d - g + 15) % 30;
+    var i = Math.floor(c / 4);
+    var k = c % 4;
+    var l = (32 + 2 * e + 2 * i - h - k) % 7;
+    var m = Math.floor((a + 11 * h + 22 * l) / 451);
+    var month = Math.floor((h + l - 7 * m + 114) / 31);
+    var day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  }
+
+  function nationalHolidaysForYear(year) {
+    if (!nationalHolidaysForYear.cache) nationalHolidaysForYear.cache = {};
+    if (nationalHolidaysForYear.cache[year]) return nationalHolidaysForYear.cache[year];
+    var names = {
+      '01-01': 'Confraternização Universal',
+      '04-21': 'Tiradentes',
+      '05-01': 'Dia do Trabalho',
+      '09-07': 'Independência',
+      '10-12': 'Nossa Senhora Aparecida',
+      '11-02': 'Finados',
+      '11-15': 'Proclamação da República',
+      '11-20': 'Consciência Negra',
+      '12-25': 'Natal'
+    };
+    var map = {};
+    Object.keys(names).forEach(function (md) { map[year + '-' + md] = names[md]; });
+    var easter = easterSundayUtc(year);
+    [[-48, 'Carnaval'], [-47, 'Carnaval'], [-2, 'Sexta-feira Santa'], [60, 'Corpus Christi']].forEach(function (pair) {
+      var dt = new Date(easter.getTime());
+      dt.setUTCDate(dt.getUTCDate() + pair[0]);
+      map[dt.toISOString().slice(0, 10)] = pair[1];
+    });
+    nationalHolidaysForYear.cache[year] = map;
+    return map;
+  }
+
+  /** Nome do feriado nacional na data (YYYY-MM-DD), ou '' se não for feriado. */
+  function nationalHolidayName(iso) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
+    return nationalHolidaysForYear(Number(iso.slice(0, 4)))[iso] || '';
+  }
+
+  /** É dia útil? Não é sábado, domingo nem feriado nacional. */
+  function isBusinessDayIso(iso) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return false;
+    var p = iso.split('-').map(Number);
+    var weekday = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12, 0, 0)).getUTCDay();
+    if (weekday === 0 || weekday === 6) return false;
+    return !nationalHolidayName(iso);
+  }
+
+  /**
+   * Dias úteis em (de, até]: o dia de partida não conta e o de chegada conta, se for útil.
+   * Negativo quando "até" vem antes de "de". Devolve null para datas inválidas ou distância acima de 2 anos.
+   */
+  function businessDaysBetween(fromIso, toIso) {
+    var re = /^\d{4}-\d{2}-\d{2}$/;
+    if (!re.test(String(fromIso || '')) || !re.test(String(toIso || ''))) return null;
+    if (toIso < fromIso) {
+      var back = businessDaysBetween(toIso, fromIso);
+      return back === null ? null : -back;
+    }
+    var p = fromIso.split('-').map(Number);
+    var cursor = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12, 0, 0));
+    var total = 0;
+    for (var steps = 0; steps < 731; steps++) {
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+      var iso = cursor.toISOString().slice(0, 10);
+      if (iso > toIso) return total;
+      if (isBusinessDayIso(iso)) total++;
+    }
+    return null;
+  }
+
+  /** Por que a data não é dia útil ("Sábado", "Domingo", "Feriado nacional: Natal"), ou '' se for útil. */
+  function nonBusinessDayReason(iso) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso || ''))) return '';
+    var p = iso.split('-').map(Number);
+    var weekday = new Date(Date.UTC(p[0], p[1] - 1, p[2], 12, 0, 0)).getUTCDay();
+    if (weekday === 6) return 'Sábado';
+    if (weekday === 0) return 'Domingo';
+    var holiday = nationalHolidayName(iso);
+    return holiday ? 'Feriado nacional: ' + holiday : '';
+  }
+
+  /** Linha curta abaixo da data fatal na tabela: dias úteis que faltam e aviso de dia não útil. */
+  function renderFatalCountdownHtml(rec, refIso) {
+    var fatalIso = rec && rec.dataFatal && rec.dataFatal.iso;
+    if (!fatalIso || !refIso) return '';
+    var parts = [];
+    var reason = nonBusinessDayReason(fatalIso);
+    if (reason) {
+      parts.push('<span class="date-note is-nonbusiness" title="A data fatal cai em dia não útil. Confira a contagem do prazo.">' + escapeHtml(reason) + '</span>');
+    }
+    if (fatalIso > refIso && !isProtocoladoSim(rec.protocolado)) {
+      var days = businessDaysBetween(refIso, fatalIso);
+      if (days !== null) {
+        var label = days === 0 ? 'nenhum dia útil até lá' : (days === 1 ? 'em 1 dia útil' : 'em ' + days + ' dias úteis');
+        parts.push('<span class="date-note' + (days <= 2 ? ' is-near' : '') + '" title="Conta só fins de semana e feriados nacionais. Feriados locais e recesso forense não entram.">' + label + '</span>');
+      }
+    }
+    return parts.join('');
+  }
+
+  /* -------------------- Número CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO) -------------------- */
+  // Conferência do dígito verificador igual à do LB Hub (services/acordos/ler-linha.ts).
+
+  /** O número inteiro, com o DV no fim, dá resto 1 na divisão por 97 (Resolução CNJ 65/2008). */
+  function isValidCnj(digits) {
+    if (!/^\d{20}$/.test(String(digits || ''))) return false;
+    var base = digits.slice(0, 7) + digits.slice(9) + digits.slice(7, 9);
+    var rest = 0;
+    for (var i = 0; i < base.length; i++) rest = (rest * 10 + Number(base[i])) % 97;
+    return rest === 1;
+  }
+
+  function formatCnj(digits) {
+    if (!/^\d{20}$/.test(String(digits || ''))) return String(digits || '');
+    return digits.slice(0, 7) + '-' + digits.slice(7, 9) + '.' + digits.slice(9, 13) + '.' +
+      digits.slice(13, 14) + '.' + digits.slice(14, 16) + '.' + digits.slice(16);
+  }
+
+  /** Sigla do tribunal pelos segmentos J.TR do número CNJ, ou '' quando não reconhece. */
+  function tribunalFromCnj(digits) {
+    if (!/^\d{20}$/.test(String(digits || ''))) return '';
+    var j = digits.slice(13, 14);
+    var tr = Number(digits.slice(14, 16));
+    var ufs = ['', 'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB',
+      'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SE', 'SP', 'TO'];
+    if (j === '1') return 'STF';
+    if (j === '2') return 'CNJ';
+    if (j === '3') return 'STJ';
+    if (j === '4') return tr === 0 ? 'CJF' : (tr <= 6 ? 'TRF' + tr : '');
+    if (j === '5') return tr === 0 ? 'TST' : (tr <= 24 ? 'TRT' + tr : '');
+    if (j === '6') return tr === 0 ? 'TSE' : (ufs[tr] ? 'TRE-' + ufs[tr] : '');
+    if (j === '7') return 'STM';
+    if (j === '8') return tr === 7 ? 'TJDFT' : (ufs[tr] ? 'TJ' + ufs[tr] : '');
+    if (j === '9') return { 13: 'TJMMG', 21: 'TJMRS', 26: 'TJMSP' }[tr] || '';
+    return '';
+  }
+
+  /**
+   * Resumo do número digitado: 'none' (não tem 20 dígitos: formato atípico, sem conferência),
+   * 'invalid' (20 dígitos com DV errado) ou 'valid' (com o número formatado e o tribunal sugerido).
+   */
+  function describeCnj(value) {
+    var digits = String(value || '').replace(/\D+/g, '');
+    if (digits.length !== 20) return { status: 'none', formatted: '', tribunal: '' };
+    if (!isValidCnj(digits)) return { status: 'invalid', formatted: formatCnj(digits), tribunal: '' };
+    return { status: 'valid', formatted: formatCnj(digits), tribunal: tribunalFromCnj(digits) };
+  }
+
   function classifyForDate(record, refIso) {
     var fatalIso = record.dataFatal && record.dataFatal.iso ? record.dataFatal.iso : null;
     var juntadaIso = record.dataJuntada && record.dataJuntada.iso ? record.dataJuntada.iso : null;
@@ -715,7 +880,7 @@
       return (
         '<tr data-record-key="' + escapeHtml(key) + '" class="' + rowClasses.join(' ') + '"' + rowStyle + '>' +
           '<td>' + attentionHtml + '</td>' +
-          '<td class="' + fatalClass + '">' + escapeHtml(fatalDisplay) + '</td>' +
+          '<td class="' + fatalClass + '">' + escapeHtml(fatalDisplay) + renderFatalCountdownHtml(rec, refIso) + '</td>' +
           '<td class="' + juntadaClass + '">' + escapeHtml(juntadaDisplay) + '</td>' +
           '<td class="col-processo">' +
             '<div class="proc-num">' + escapeHtml(rec.numeroProcesso || '') + '</div>' +
@@ -723,6 +888,9 @@
               escapeHtml(rec.tribunal || 'Tribunal não informado') +
               (rec.tipo ? ' • ' + escapeHtml(rec.tipo) : '') +
             '</div>' +
+            (describeCnj(rec.numeroProcesso).status === 'invalid'
+              ? '<span class="badge badge-pending" title="O número tem 20 dígitos, mas o dígito verificador do CNJ não confere. Pode haver erro de digitação.">Confira o nº CNJ</span>'
+              : '') +
           '</td>' +
           '<td class="col-cliente">' + escapeHtml(rec.cliente || '') + '</td>' +
           '<td class="col-resp">' +
@@ -812,8 +980,8 @@
       '<svg viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' +
         '<defs>' +
           '<linearGradient id="heroSparkGrad" x1="0" y1="0" x2="0" y2="1">' +
-            '<stop offset="0%" stop-color="#c0a68d" stop-opacity="0.34" />' +
-            '<stop offset="100%" stop-color="#c0a68d" stop-opacity="0" />' +
+            '<stop offset="0%" stop-color="#93784a" stop-opacity="0.34" />' +
+            '<stop offset="100%" stop-color="#93784a" stop-opacity="0" />' +
           '</linearGradient>' +
           '<filter id="heroSparkGlow" filterUnits="userSpaceOnUse" x="-16" y="-16" width="' + (w + 32) + '" height="' + (h + 32) + '">' +
             '<feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b" />' +
@@ -821,10 +989,10 @@
           '</filter>' +
         '</defs>' +
         '<path' + (anim ? ' class="neon-surge" style="--surge-delay:0.45s"' : '') + ' d="' + dArea + '" fill="url(#heroSparkGrad)" />' +
-        '<path' + (anim ? ' class="neon-draw"' : '') + ' filter="url(#heroSparkGlow)" pathLength="1" d="' + dLine + '" fill="none" stroke="#c0a68d" stroke-width="2.1" stroke-linecap="round" />' +
+        '<path' + (anim ? ' class="neon-draw"' : '') + ' pathLength="1" d="' + dLine + '" fill="none" stroke="#93784a" stroke-width="2.1" stroke-linecap="round" />' +
         '<g class="neon-beacon' + (anim ? ' neon-surge' : '') + '" style="--surge-delay:0.85s">' +
-          '<circle class="neon-halo" cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="8" fill="#c0a68d" opacity="0.35" />' +
-          '<circle cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="3.6" fill="#e5d2be" stroke="#0c0c0d" stroke-width="1.5" />' +
+          '<circle class="neon-halo" cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="8" fill="#93784a" opacity="0.35" />' +
+          '<circle cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="3.6" fill="#ffffff" stroke="#93784a" stroke-width="1.5" />' +
         '</g>' +
       '</svg>';
   }
@@ -871,7 +1039,7 @@
       }
       buckets = Object.keys(map).sort().slice(-10).map(function (key) { return map[key]; });
       if (buckets.length === 0) {
-        els.chartTimeline.innerHTML = '<div style="padding:36px 12px; text-align:center; color:#aba399; font-size:13px;">Sem datas de entrada ou atualização disponíveis.</div>';
+        els.chartTimeline.innerHTML = '<div style="padding:36px 12px; text-align:center; color:#646c75; font-size:13px;">Sem datas de entrada ou atualização disponíveis.</div>';
         return;
       }
     }
@@ -896,7 +1064,7 @@
     var gridLines = '';
     for (var g = 0; g <= 3; g++) {
       var gy = padT + (plotH * g) / 3;
-      gridLines += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (svgW - padR) + '" y2="' + gy.toFixed(1) + '" stroke="' + (g === 3 ? 'rgba(192,166,141,0.34)' : 'rgba(255,255,255,0.09)') + '"' + (g < 3 ? ' stroke-dasharray="2 5"' : '') + ' stroke-width="1" />';
+      gridLines += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (svgW - padR) + '" y2="' + gy.toFixed(1) + '" stroke="' + (g === 3 ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.06)') + '"' + (g < 3 ? ' stroke-dasharray="2 5"' : '') + ' stroke-width="1" />';
     }
 
     var linePts = [];
@@ -921,9 +1089,9 @@
         ' Q' + (bx + barW).toFixed(1) + ' ' + y.toFixed(1) + ' ' + (bx + barW).toFixed(1) + ' ' + (y + rTop).toFixed(1) +
         ' V' + baseY.toFixed(1) + ' Z';
 
-      var barFill = item.isRef ? 'url(#neonBarChampagne)' : (item.total > 0 ? 'url(#neonBarIvory)' : 'rgba(255,255,255,0.08)');
+      var barFill = item.isRef ? 'url(#neonBarChampagne)' : (item.total > 0 ? 'url(#neonBarIvory)' : '#eceef0');
       var barFilter = item.isRef ? ' filter="url(#neonGlowSoft)"' : '';
-      var labelColor = item.isRef ? '#e4cfba' : '#968f86';
+      var labelColor = item.isRef ? '#7d6640' : '#646c75';
       var labelWeight = item.isRef ? '700' : '500';
       var pendingH = item.pending > 0 ? Math.min(h, Math.max(4, (item.pending / maxVal) * plotH)) : 0;
       var animAttr = doAnim ? ' class="timeline-bar timeline-bar-anim" style="--bar-delay:' + (b * 45) + 'ms"' : ' class="timeline-bar"';
@@ -931,13 +1099,13 @@
       barsSvg +=
         '<g class="timeline-bar-group" data-chart-date="' + escapeHtml(item.iso) + '">' +
           '<title>' + escapeHtml(item.label + ': ' + item.total + ' processo(s), ' + item.pending + ' não protocolado(s)') + '</title>' +
-          (item.isRef ? '<line x1="' + cx.toFixed(1) + '" y1="' + padT + '" x2="' + cx.toFixed(1) + '" y2="' + baseY.toFixed(1) + '" stroke="rgba(192,166,141,0.38)" stroke-dasharray="3 3" stroke-width="1" />' : '') +
+          (item.isRef ? '<line x1="' + cx.toFixed(1) + '" y1="' + padT + '" x2="' + cx.toFixed(1) + '" y2="' + baseY.toFixed(1) + '" stroke="rgba(147,120,74,0.45)" stroke-dasharray="3 3" stroke-width="1" />' : '') +
           '<path d="' + barPath + '" fill="' + barFill + '"' + barFilter + animAttr + ' />' +
           (pendingH > 0 && item.total > 0 && !item.isRef
-            ? '<rect x="' + bx.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.min(4, pendingH).toFixed(1) + '" rx="2" fill="#d94854"' + (doAnim ? ' class="neon-surge" style="--surge-delay:' + (260 + b * 45) + 'ms"' : '') + ' />'
+            ? '<rect x="' + bx.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.min(4, pendingH).toFixed(1) + '" rx="2" fill="#b42318"' + (doAnim ? ' class="neon-surge" style="--surge-delay:' + (260 + b * 45) + 'ms"' : '') + ' />'
             : '') +
           (item.total > 0
-            ? '<text x="' + cx.toFixed(1) + '" y="' + (y - 9).toFixed(1) + '" text-anchor="middle" font-size="11" font-weight="700" font-family="var(--font-mono)" fill="' + (item.isRef ? '#ead7c3' : '#f5f2ed') + '"' + (doAnim ? ' class="neon-surge" style="--surge-delay:' + (220 + b * 45) + 'ms"' : '') + '>' + item.total + '</text>'
+            ? '<text x="' + cx.toFixed(1) + '" y="' + (y - 9).toFixed(1) + '" text-anchor="middle" font-size="11" font-weight="700" font-family="var(--font-mono)" fill="' + (item.isRef ? '#7d6640' : '#1c3f53') + '"' + (doAnim ? ' class="neon-surge" style="--surge-delay:' + (220 + b * 45) + 'ms"' : '') + '>' + item.total + '</text>'
             : '') +
           '<text x="' + cx.toFixed(1) + '" y="' + (svgH - 10) + '" text-anchor="middle" font-size="10.5" font-weight="' + labelWeight + '" font-family="var(--font-mono)" fill="' + labelColor + '">' + escapeHtml(item.label) + '</text>' +
         '</g>';
@@ -949,30 +1117,30 @@
       var areaD = smoothD + ' L' + linePts[linePts.length - 1][0].toFixed(1) + ' ' + baseY.toFixed(1) + ' L' + linePts[0][0].toFixed(1) + ' ' + baseY.toFixed(1) + ' Z';
       curveSvg =
         '<path' + (doAnim ? ' class="neon-surge" style="--surge-delay:0.35s"' : '') + ' d="' + areaD + '" fill="url(#champagneNeonArea)" />' +
-        '<path' + (doAnim ? ' class="neon-draw"' : '') + ' filter="url(#neonGlowLine)" pathLength="1" d="' + smoothD + '" fill="none" stroke="#d5bc9f" stroke-width="2.3" stroke-linecap="round" />';
+        '<path' + (doAnim ? ' class="neon-draw"' : '') + ' pathLength="1" d="' + smoothD + '" fill="none" stroke="#93784a" stroke-width="2.3" stroke-linecap="round" />';
     }
 
     var beaconSvg = refPt
       ? '<g class="neon-beacon' + (doAnim ? ' neon-surge' : '') + '" style="--surge-delay:0.75s">' +
-          '<circle class="neon-halo" cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="10" fill="#c0a68d" opacity="0.45" />' +
-          '<circle cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="4.5" fill="#ead7c3" stroke="#0c0c0d" stroke-width="2" />' +
+          '<circle class="neon-halo" cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="10" fill="#93784a" opacity="0.45" />' +
+          '<circle cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="4.5" fill="#ffffff" stroke="#93784a" stroke-width="2" />' +
         '</g>'
       : '';
 
     var defsSvg =
       '<defs>' +
         '<linearGradient id="neonBarChampagne" x1="0" y1="0" x2="0" y2="1">' +
-          '<stop offset="0%" stop-color="#e5cfb8" stop-opacity="1" />' +
-          '<stop offset="65%" stop-color="#c0a68d" stop-opacity="0.88" />' +
-          '<stop offset="100%" stop-color="#c0a68d" stop-opacity="0.22" />' +
+          '<stop offset="0%" stop-color="#a8896a" stop-opacity="1" />' +
+          '<stop offset="65%" stop-color="#93784a" stop-opacity="0.88" />' +
+          '<stop offset="100%" stop-color="#93784a" stop-opacity="0.22" />' +
         '</linearGradient>' +
         '<linearGradient id="neonBarIvory" x1="0" y1="0" x2="0" y2="1">' +
-          '<stop offset="0%" stop-color="#ffffff" stop-opacity="0.92" />' +
-          '<stop offset="100%" stop-color="#c0a68d" stop-opacity="0.22" />' +
+          '<stop offset="0%" stop-color="#2a5670" stop-opacity="0.95" />' +
+          '<stop offset="100%" stop-color="#1c3f53" stop-opacity="0.35" />' +
         '</linearGradient>' +
         '<linearGradient id="champagneNeonArea" x1="0" y1="0" x2="0" y2="1">' +
-          '<stop offset="0%" stop-color="#c0a68d" stop-opacity="0.26" />' +
-          '<stop offset="100%" stop-color="#c0a68d" stop-opacity="0" />' +
+          '<stop offset="0%" stop-color="#93784a" stop-opacity="0.26" />' +
+          '<stop offset="100%" stop-color="#93784a" stop-opacity="0" />' +
         '</linearGradient>' +
         '<filter id="neonGlowLine" filterUnits="userSpaceOnUse" x="-20" y="-20" width="' + (svgW + 40) + '" height="' + (svgH + 40) + '">' +
           '<feGaussianBlur in="SourceGraphic" stdDeviation="3.4" result="b" />' +
@@ -1072,9 +1240,9 @@
               '<feMerge><feMergeNode in="c" /><feMergeNode in="SourceGraphic" /></feMerge>' +
             '</filter>' +
           '</defs>' +
-          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#efeae2" stroke-width="14" />' +
-          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#c0a68d" filter="url(#donutNeonGlow)" stroke-width="14" stroke-dasharray="' + dashNao.toFixed(1) + ' ' + circ.toFixed(1) + '" stroke-dashoffset="' + (-dashSim).toFixed(1) + '" transform="rotate(-90 69 69)" />' +
-          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#0e0e10" stroke-width="14" stroke-dasharray="' + dashSim.toFixed(1) + ' ' + circ.toFixed(1) + '" transform="rotate(-90 69 69)" />' +
+          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#eceef0" stroke-width="14" />' +
+          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#93784a" stroke-width="14" stroke-dasharray="' + dashNao.toFixed(1) + ' ' + circ.toFixed(1) + '" stroke-dashoffset="' + (-dashSim).toFixed(1) + '" transform="rotate(-90 69 69)" />' +
+          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#1c3f53" stroke-width="14" stroke-dasharray="' + dashSim.toFixed(1) + ' ' + circ.toFixed(1) + '" transform="rotate(-90 69 69)" />' +
         '</svg>' +
         '<div class="donut-center">' +
           '<span id="donutPctValue" class="donut-pct">' + pctSim + '%</span>' +
@@ -1083,11 +1251,11 @@
       '</div>' +
       '<div class="donut-legend">' +
         '<button type="button" class="legend-btn' + (activeSim ? ' is-active-filter' : '') + '" data-chart-proto="Sim">' +
-          '<span class="legend-btn-left"><i class="legend-dot" style="background:#0e0e10"></i>Protocolado (Sim)</span>' +
+          '<span class="legend-btn-left"><i class="legend-dot" style="background:#1c3f53"></i>Protocolado (Sim)</span>' +
           '<span class="legend-btn-val">' + sim + '</span>' +
         '</button>' +
         '<button type="button" class="legend-btn' + (activeNao ? ' is-active-filter' : '') + '" data-chart-proto="Não">' +
-          '<span class="legend-btn-left"><i class="legend-dot" style="background:#c0a68d; box-shadow:0 0 8px rgba(192,166,141,0.7)"></i>Pendente (Não)</span>' +
+          '<span class="legend-btn-left"><i class="legend-dot" style="background:#93784a"></i>Pendente (Não)</span>' +
           '<span class="legend-btn-val">' + nao + '</span>' +
         '</button>' +
         (outros > 0
@@ -1253,7 +1421,39 @@
       ? 'Altere os campos desejados e clique em "Revisar e salvar".'
       : 'Modo consulta (somente leitura).';
 
+    updateFieldHints();
     els.modalBackdrop.classList.remove('hidden');
+  }
+
+  /** Avisos abaixo do número do processo e da data fatal no formulário. Nunca impedem salvar. */
+  function updateFieldHints() {
+    var procEl = document.getElementById('edit_numeroProcesso');
+    var tribEl = document.getElementById('edit_tribunal');
+    var fatalEl = document.getElementById('edit_dataFatal');
+    var cnjHint = document.getElementById('cnjHint');
+    var fatalHint = document.getElementById('dataFatalHint');
+    if (!procEl || !cnjHint || !fatalHint) return;
+
+    var info = describeCnj(procEl.value);
+    var html = '';
+    if (info.status === 'invalid') {
+      html = '<span class="hint-warn">O dígito verificador do CNJ não confere. Confira se não há erro de digitação.</span>';
+    } else if (info.status === 'valid') {
+      html = '<span class="hint-ok">Número CNJ válido' + (info.tribunal ? ' · ' + escapeHtml(info.tribunal) : '') + '</span>';
+      if (!procEl.disabled && procEl.value.trim() !== info.formatted) {
+        html += '<button type="button" class="hint-action" data-hint-action="format-cnj">Formatar</button>';
+      }
+      if (info.tribunal && tribEl && !tribEl.disabled && normalizeText(tribEl.value) !== normalizeText(info.tribunal)) {
+        html += '<button type="button" class="hint-action" data-hint-action="use-tribunal" data-tribunal="' + escapeHtml(info.tribunal) + '">' +
+          (tribEl.value.trim() ? 'Trocar tribunal para ' : 'Usar ') + escapeHtml(info.tribunal) + '</button>';
+      }
+    }
+    cnjHint.innerHTML = html;
+
+    var reason = fatalEl ? nonBusinessDayReason(fatalEl.value) : '';
+    fatalHint.innerHTML = reason
+      ? '<span class="hint-warn">' + escapeHtml(reason) + '. A data fatal cai em dia não útil.</span>'
+      : '';
   }
 
   function closeRecordModal() {
@@ -1829,6 +2029,32 @@
         inputEl.addEventListener('change', onEditFormChanged);
       }
     });
+
+    ['edit_numeroProcesso', 'edit_tribunal', 'edit_dataFatal'].forEach(function (id) {
+      var inputEl = document.getElementById(id);
+      if (inputEl) {
+        inputEl.addEventListener('input', updateFieldHints);
+        inputEl.addEventListener('change', updateFieldHints);
+      }
+    });
+
+    var cnjHintEl = document.getElementById('cnjHint');
+    if (cnjHintEl) {
+      cnjHintEl.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-hint-action]');
+        if (!btn) return;
+        var procEl = document.getElementById('edit_numeroProcesso');
+        var tribEl = document.getElementById('edit_tribunal');
+        if (btn.getAttribute('data-hint-action') === 'format-cnj' && !procEl.disabled) {
+          procEl.value = describeCnj(procEl.value).formatted;
+        }
+        if (btn.getAttribute('data-hint-action') === 'use-tribunal' && tribEl && !tribEl.disabled) {
+          tribEl.value = btn.getAttribute('data-tribunal');
+        }
+        onEditFormChanged();
+        updateFieldHints();
+      });
+    }
 
     els.btnReviewSave.addEventListener('click', showPreSaveConfirmation);
     els.btnCancelConfirm.addEventListener('click', function () {

@@ -83,7 +83,7 @@ test('2. Dois prazos do mesmo processo são independentes na listagem e na ediç
   const env = createGasRuntime({ referenceDateIso: FIXED_TODAY });
   const snap = env.api.apiGetAgendaData();
 
-  const sameProcess = snap.records.filter((r) => r.numeroProcesso === '0004821-15.2025.8.26.0100');
+  const sameProcess = snap.records.filter((r) => r.numeroProcesso === '0004821-67.2025.8.26.0100');
   assert.strictEqual(sameProcess.length, 2);
   assert.notStrictEqual(sameProcess[0].id, sameProcess[1].id);
 
@@ -195,9 +195,9 @@ test('5. Número do processo preserva zeros à esquerda e busca funciona com/sem
   const snap = env.api.apiGetAgendaData();
 
   const recZeros = findById(snap.records, 'PRZ-DEMO-0005');
-  assert.strictEqual(recZeros.numeroProcesso, '0000718-09.2025.8.26.0002');
-  assert.strictEqual(env.api.matchesSearchQuery(recZeros, '00007180920258260002'), true);
-  assert.strictEqual(env.api.matchesSearchQuery(recZeros, '0000718-09'), true);
+  assert.strictEqual(recZeros.numeroProcesso, '0000718-20.2025.8.26.0002');
+  assert.strictEqual(env.api.matchesSearchQuery(recZeros, '00007182020258260002'), true);
+  assert.strictEqual(env.api.matchesSearchQuery(recZeros, '0000718-20'), true);
   assert.strictEqual(env.api.matchesSearchQuery(recZeros, 'ana paula'), true);
 
   const recAtypical = findById(snap.records, 'PRZ-DEMO-0009');
@@ -521,6 +521,78 @@ test('Linha sem cliente ou processo continua na agenda com aviso e fica fora dos
   const completo = front.renderAttentionBadgesHtml(fatalToday, { numeroProcesso: '0001', cliente: 'Banco X' });
   assert.ok(!completo.includes('Cadastro incompleto'));
   assert.strictEqual(front.isCompleteRecord({ numeroProcesso: '0001', cliente: ' ' }), false);
+});
+
+/* =========================================================================
+ * Dias úteis e número CNJ (trazidos do LB Hub)
+ * ========================================================================= */
+const BUSINESS_DAY_FNS = ['normalizeText', 'isProtocoladoSim', 'escapeHtml', 'easterSundayUtc', 'nationalHolidaysForYear',
+  'nationalHolidayName', 'isBusinessDayIso', 'businessDaysBetween', 'nonBusinessDayReason', 'renderFatalCountdownHtml'];
+const CNJ_FNS = ['isValidCnj', 'formatCnj', 'tribunalFromCnj', 'describeCnj'];
+
+test('Feriados nacionais calculados pela Páscoa batem com a lista do LB Hub (2025 a 2030)', () => {
+  const front = loadFrontFunctions(BUSINESS_DAY_FNS);
+  // Lista do LB Hub (apps/hub/src/services/acordos/prazo.ts): Carnaval (seg e ter), Sexta-feira Santa e Corpus Christi.
+  const moveisLbHub = {
+    2025: ['2025-03-03', '2025-03-04', '2025-04-18', '2025-06-19'],
+    2026: ['2026-02-16', '2026-02-17', '2026-04-03', '2026-06-04'],
+    2027: ['2027-02-08', '2027-02-09', '2027-03-26', '2027-05-27'],
+    2028: ['2028-02-28', '2028-02-29', '2028-04-14', '2028-06-15'],
+    2029: ['2029-02-12', '2029-02-13', '2029-03-30', '2029-05-31'],
+    2030: ['2030-03-04', '2030-03-05', '2030-04-19', '2030-06-20']
+  };
+  const fixos = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25'];
+  for (const [ano, moveis] of Object.entries(moveisLbHub)) {
+    const esperado = fixos.map((md) => ano + '-' + md).concat(moveis).sort();
+    assert.deepStrictEqual(Object.keys(front.nationalHolidaysForYear(Number(ano))).sort(), esperado, 'feriados de ' + ano);
+  }
+  // A lista não acaba: anos depois de 2030 também têm os 13 feriados.
+  assert.strictEqual(Object.keys(front.nationalHolidaysForYear(2035)).length, 13);
+});
+
+test('Contagem de dias úteis pula fins de semana e feriados nacionais', () => {
+  const front = loadFrontFunctions(BUSINESS_DAY_FNS);
+  assert.strictEqual(front.businessDaysBetween('2026-11-27', '2026-11-27'), 0);
+  assert.strictEqual(front.businessDaysBetween('2026-11-27', '2026-11-30'), 1, 'sexta para segunda');
+  assert.strictEqual(front.businessDaysBetween('2026-12-24', '2026-12-28'), 1, 'Natal na sexta');
+  assert.strictEqual(front.businessDaysBetween('2026-11-19', '2026-11-23'), 1, 'Consciência Negra na sexta');
+  assert.strictEqual(front.businessDaysBetween('2026-11-30', '2026-11-27'), -1);
+  assert.strictEqual(front.businessDaysBetween('', '2026-11-27'), null);
+  assert.strictEqual(front.isBusinessDayIso('2026-02-17'), false, 'terça de Carnaval');
+  assert.strictEqual(front.nonBusinessDayReason('2026-12-25'), 'Feriado nacional: Natal');
+  assert.strictEqual(front.nonBusinessDayReason('2026-11-28'), 'Sábado');
+  assert.strictEqual(front.nonBusinessDayReason('2026-11-30'), '');
+});
+
+test('Data fatal mostra dias úteis que faltam e avisa quando cai em dia não útil', () => {
+  const front = loadFrontFunctions(BUSINESS_DAY_FNS);
+  const rec = (iso, protocolado) => ({ dataFatal: { iso }, protocolado });
+  assert.match(front.renderFatalCountdownHtml(rec('2026-12-04', 'Não'), FIXED_TODAY), /em 6 dias úteis/);
+  assert.match(front.renderFatalCountdownHtml(rec('2026-11-30', ''), FIXED_TODAY), /is-near.*em 2 dias úteis/);
+  assert.strictEqual(front.renderFatalCountdownHtml(rec('2026-12-04', 'Sim'), FIXED_TODAY), '', 'já protocolado não conta');
+  assert.strictEqual(front.renderFatalCountdownHtml(rec('2026-11-24', 'Não'), FIXED_TODAY), '', 'data passada não conta');
+  assert.match(front.renderFatalCountdownHtml(rec('2026-12-25', 'Sim'), FIXED_TODAY), /Feriado nacional: Natal/);
+  assert.strictEqual(front.renderFatalCountdownHtml({ dataFatal: { iso: null } }, FIXED_TODAY), '');
+});
+
+test('Número CNJ: confere o dígito verificador, formata e sugere o tribunal', () => {
+  const front = loadFrontFunctions(CNJ_FNS);
+  // Números gerados pela fórmula do DV da Resolução CNJ 65/2008 (98 - resto), independente da conferência testada.
+  const casos = {
+    '0001234-03.2026.8.26.0100': 'TJSP',
+    '5004321-30.2025.4.03.6100': 'TRF3',
+    '0010001-54.2026.5.02.0001': 'TRT2',
+    '0700001-61.2026.8.07.0001': 'TJDFT'
+  };
+  for (const [numero, tribunal] of Object.entries(casos)) {
+    const semPontos = numero.replace(/\D/g, '');
+    assert.strictEqual(front.isValidCnj(semPontos), true, numero);
+    assert.strictEqual(front.formatCnj(semPontos), numero);
+    assert.deepStrictEqual({ ...front.describeCnj(semPontos) }, { status: 'valid', formatted: numero, tribunal });
+  }
+  assert.strictEqual(front.describeCnj('0001234-04.2026.8.26.0100').status, 'invalid', 'DV trocado');
+  assert.strictEqual(front.describeCnj('000015').status, 'none', 'formato atípico não é conferido');
+  assert.strictEqual(front.describeCnj('').status, 'none');
 });
 
 (async function main() {
