@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <title>Agenda de Prazos — Controladoria</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <?!= include('Styles'); ?>
 </head>
 <body>
@@ -24,148 +27,312 @@
     </div>
   </div>
 
-  <!-- Cabeçalho Principal -->
-  <header class="topbar">
-    <div class="topbar-brand">
-      <h1>Agenda de Prazos — Controladoria</h1>
-      <div class="topbar-meta">
-        <span id="metaSheetInfo">Carregando planilha...</span>
-        <span id="metaTimezoneInfo">Fuso: America/Sao_Paulo</span>
-        <span id="metaSyncInfo"></span>
-      </div>
-    </div>
-    <div class="topbar-actions">
-      <button id="newRecord" type="button" class="btn btn-topbar hidden">Novo processo</button>
-      <button id="manageLists" type="button" class="btn btn-topbar hidden">Gerenciar listas</button>
-      <span id="userAccessBadge" class="access-badge viewer">Verificando acesso...</span>
-      <button type="button" id="btnInitIds" class="btn btn-warn btn-sm hidden">Inicializar IDs estáveis</button>
-      <button type="button" id="btnRefresh" class="btn btn-topbar">Atualizar da planilha</button>
-    </div>
-  </header>
-
-  <main class="container">
-    <!-- Alerta global (erros de conexão/permissão ou avisos operacionais) -->
-    <div id="globalAlert" class="alert hidden" role="alert"></div>
-
-    <!-- Barra de Data de Referência e Escopo -->
-    <section class="control-card" aria-label="Data de consulta e modo de exibição">
-      <div class="date-scope-row">
-        <div class="date-nav">
-          <div class="date-label-block">
-            <span class="date-label-caption">Data usada na consulta</span>
-            <span id="referenceDateDisplay" class="date-label-value">--/--/----</span>
+  <div class="app-shell">
+    <!-- Barra Lateral Executiva -->
+    <aside class="sidebar" aria-label="Navegação principal">
+      <div>
+        <div class="sidebar-brand">
+          <div class="brand-emblem" aria-hidden="true">CP</div>
+          <div>
+            <h2 class="sidebar-title">Controladoria</h2>
+            <div class="sidebar-sub">Direito Bancário</div>
           </div>
-          <button type="button" id="btnPrevDay" class="btn btn-sm" title="Dia anterior">&larr; Anterior</button>
-          <button type="button" id="btnToday" class="btn btn-sm">Hoje</button>
-          <input type="date" id="referenceDateInput" class="date-input" aria-label="Escolher outra data de consulta">
-          <button type="button" id="btnNextDay" class="btn btn-sm" title="Próximo dia">Próximo &rarr;</button>
         </div>
 
-        <div class="scope-tabs" role="tablist" aria-label="Escopo da listagem">
-          <button type="button" id="tabAttention" class="scope-tab active" role="tab" aria-selected="true">
-            Atenção do dia (<span id="countTabAttention">0</span>)
+        <div class="sidebar-section-label">Navegação</div>
+        <nav class="sidebar-nav">
+          <button type="button" id="navDashboard" class="nav-item active">
+            <span class="nav-item-left">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+              <span>Painel &amp; Gráficos</span>
+            </span>
           </button>
-          <button type="button" id="tabAll" class="scope-tab" role="tab" aria-selected="false">
-            Toda a agenda (<span id="countTabAll">0</span>)
+          <button type="button" id="navAttention" class="nav-item">
+            <span class="nav-item-left">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+              <span>Atenção do dia</span>
+            </span>
+            <span id="navCountAttention" class="nav-pill">0</span>
           </button>
-        </div>
+          <button type="button" id="navAll" class="nav-item">
+            <span class="nav-item-left">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+              <span>Toda a agenda</span>
+            </span>
+            <span id="navCountAll" class="nav-pill">0</span>
+          </button>
+        </nav>
       </div>
-    </section>
 
-    <!-- Resumo do Dia -->
-    <section class="kpi-grid" aria-label="Resumo operacional da data">
-      <div class="kpi-card pending">
-        <div class="kpi-title">Pendentes de conferência</div>
-        <div id="kpiPending" class="kpi-value">0</div>
-        <div class="kpi-sub">Data fatal anterior + Protocolado = Não (não comprova perda de prazo)</div>
+      <div class="sidebar-footer">
+        <div class="sidebar-meta-card">
+          <strong id="metaSheetInfo">Carregando planilha...</strong>
+          <span id="metaTimezoneInfo">Fuso: America/Sao_Paulo</span>
+          <span id="metaSyncInfo"></span>
+        </div>
       </div>
-      <div class="kpi-card fatal">
-        <div class="kpi-title">Prazos fatais na data</div>
-        <div id="kpiFatal" class="kpi-value">0</div>
-        <div class="kpi-sub">Registros com Data fatal igual à data consultada</div>
-      </div>
-      <div class="kpi-card juntada">
-        <div class="kpi-title">Juntadas na data</div>
-        <div id="kpiJuntada" class="kpi-value">0</div>
-        <div class="kpi-sub">Registros com Data da juntada igual à data consultada</div>
-      </div>
-      <div class="kpi-card filtered">
-        <div class="kpi-title">Exibidos na tabela</div>
-        <div id="kpiVisible" class="kpi-value">0</div>
-        <div id="kpiVisibleSub" class="kpi-sub">Após busca e filtros aplicados na sua tela</div>
-      </div>
-    </section>
+    </aside>
 
-    <!-- Busca e Filtros Combináveis -->
-    <section class="control-card" aria-label="Busca e filtros">
-      <div class="filters-grid">
-        <div class="field-group">
-          <label for="searchInput">Buscar por processo ou cliente</label>
-          <input
-            type="search"
-            id="searchInput"
-            placeholder="Ex.: 0004821-15.2025..., 0004821152025 ou nome do cliente"
-            autocomplete="off"
-          >
+    <!-- Área de Trabalho Principal -->
+    <div class="workspace-main">
+      <header class="topbar">
+        <div class="topbar-inner">
+          <div class="topbar-heading">
+            <h1>Agenda de Prazos</h1>
+            <div class="topbar-subline">
+              <span>Painel analítico e operacional da controladoria</span>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <button id="newRecord" type="button" class="btn btn-topbar hidden">+ Novo processo</button>
+            <button id="manageLists" type="button" class="btn btn-topbar hidden">Gerenciar listas</button>
+            <span id="userAccessBadge" class="access-badge viewer">Verificando acesso...</span>
+            <button type="button" id="btnInitIds" class="btn btn-warn btn-sm hidden">Inicializar IDs estáveis</button>
+            <button type="button" id="btnRefresh" class="btn btn-topbar">Atualizar</button>
+          </div>
         </div>
-        <div class="field-group">
-          <label for="filterResponsavel">Responsável</label>
-          <select id="filterResponsavel"><option value="">Todos</option></select>
-        </div>
-        <div class="field-group">
-          <label for="filterTribunal">Tribunal</label>
-          <select id="filterTribunal"><option value="">Todos</option></select>
-        </div>
-        <div class="field-group">
-          <label for="filterPriorizacao">Priorização</label>
-          <select id="filterPriorizacao"><option value="">Todas</option></select>
-        </div>
-        <div class="field-group">
-          <label for="filterTipo">Tipo</label>
-          <select id="filterTipo"><option value="">Todos</option></select>
-        </div>
-        <div class="field-group">
-          <label for="filterProtocolado">Protocolado</label>
-          <select id="filterProtocolado"><option value="">Todos</option></select>
-        </div>
-        <div>
-          <button type="button" id="btnClearFilters" class="btn">Limpar filtros</button>
-        </div>
-      </div>
-      <div class="filters-footer">
-        <span>Filtros e busca atuam apenas na sua sessão local e não alteram a visualização dos colegas nem a planilha.</span>
-        <span id="extraMatchesHint" class="hidden"></span>
-      </div>
-    </section>
+      </header>
 
-    <!-- Tabela de Prazos -->
-    <section class="table-card" aria-label="Lista de prazos">
-      <div id="loadingState" class="loading-state">Carregando prazos da planilha...</div>
-      <div id="tableWrapper" class="table-scroll hidden">
-        <table class="agenda-table">
-          <thead>
-            <tr>
-              <th>Atenção</th>
-              <th>Data fatal</th>
-              <th>Data juntada</th>
-              <th>Processo / Tribunal</th>
-              <th>Cliente</th>
-              <th>Responsável</th>
-              <th>Priorização</th>
-              <th>Próximos passos</th>
-              <th>Protocolado</th>
-              <th>Ação</th>
-            </tr>
-          </thead>
-          <tbody id="agendaTableBody"></tbody>
-        </table>
-      </div>
-      <div id="emptyState" class="empty-state hidden">
-        <h3 id="emptyStateTitle">Nenhum prazo encontrado</h3>
-        <p id="emptyStateDesc">Ajuste a data consultada, os filtros ou alterne para "Toda a agenda".</p>
-      </div>
-    </section>
-  </main>
+      <main class="container">
+        <!-- Alerta global -->
+        <div id="globalAlert" class="alert hidden" role="alert"></div>
+
+        <!-- Barra de Data de Consulta e Escopo -->
+        <section class="date-toolbar" aria-label="Data de consulta e modo de exibição">
+          <div class="date-nav">
+            <div class="date-label-block">
+              <span class="date-label-caption">Data usada na consulta</span>
+              <span id="referenceDateDisplay" class="date-label-value">--/--/----</span>
+            </div>
+            <button type="button" id="btnPrevDay" class="btn btn-sm" title="Dia anterior">&larr; Anterior</button>
+            <button type="button" id="btnToday" class="btn btn-sm">Hoje</button>
+            <input type="date" id="referenceDateInput" class="date-input" aria-label="Escolher outra data de consulta">
+            <button type="button" id="btnNextDay" class="btn btn-sm" title="Próximo dia">Próximo &rarr;</button>
+          </div>
+
+          <div class="toolbar-right">
+            <button type="button" id="btnToggleAnalytics" class="btn btn-sm">Ocultar gráficos</button>
+            <div class="scope-tabs" role="tablist" aria-label="Escopo da listagem">
+              <button type="button" id="tabAttention" class="scope-tab active" role="tab" aria-selected="true">
+                Atenção do dia (<span id="countTabAttention">0</span>)
+              </button>
+              <button type="button" id="tabAll" class="scope-tab" role="tab" aria-selected="false">
+                Toda a agenda (<span id="countTabAll">0</span>)
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Cartões KPI Executivos (Bento Assimétrico Editorial) -->
+        <section class="kpi-grid reveal-2" aria-label="Resumo operacional da data">
+          <div class="kpi-card pending">
+            <div id="heroSparkline" class="heroi-faisca" aria-hidden="true"></div>
+            <div class="kpi-top">
+              <div>
+                <span class="kpi-index">01 · Prioridade</span>
+                <div class="kpi-title">Pendentes de conferência</div>
+              </div>
+              <div class="kpi-icon" aria-hidden="true">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+              </div>
+            </div>
+            <div id="kpiPending" class="kpi-value">0</div>
+            <div class="kpi-sub">Data fatal anterior + Protocolado = Não — a passagem da data, sozinha, não comprova perda de prazo</div>
+          </div>
+
+          <div class="kpi-card fatal">
+            <div class="kpi-top">
+              <div>
+                <span class="kpi-index">02 · Vencimento</span>
+                <div class="kpi-title">Prazos fatais na data</div>
+              </div>
+              <div class="kpi-icon" aria-hidden="true">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+              </div>
+            </div>
+            <div id="kpiFatal" class="kpi-value">0</div>
+            <div class="kpi-sub">Registros com Data fatal igual à data consultada</div>
+          </div>
+
+          <div class="kpi-card juntada">
+            <div class="kpi-top">
+              <div>
+                <span class="kpi-index">03 · Peças</span>
+                <div class="kpi-title">Juntadas na data</div>
+              </div>
+              <div class="kpi-icon" aria-hidden="true">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M16 13H8M16 17H8"/></svg>
+              </div>
+            </div>
+            <div id="kpiJuntada" class="kpi-value">0</div>
+            <div class="kpi-sub">Registros com Data da juntada igual à data consultada</div>
+          </div>
+
+          <div class="kpi-card filtered">
+            <div class="kpi-top">
+              <div>
+                <span class="kpi-index">04 · Visão ativa</span>
+                <div class="kpi-title">Exibidos na carteira</div>
+              </div>
+              <div class="kpi-icon" aria-hidden="true">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m22 4-10 10.01-3-3"/></svg>
+              </div>
+            </div>
+            <div id="kpiVisible" class="kpi-value">0</div>
+            <div id="kpiVisibleSub" class="kpi-sub">Após busca e filtros aplicados na sua tela</div>
+          </div>
+        </section>
+
+        <!-- Painel Analítico com Gráficos Interativos -->
+        <section id="analyticsSection" class="analytics-section" aria-label="Gráficos da controladoria">
+          <div class="analytics-row-top">
+            <!-- Gráfico 1: Entrada / Fluxo de Processos por Data (Painel Neon Obsidian) -->
+            <article class="chart-card chart-card-dark">
+              <div class="chart-head">
+                <div>
+                  <h2 id="timelineChartTitle" class="chart-title">Fluxo de prazos e entradas por data</h2>
+                  <p id="timelineChartSub" class="chart-sub">Clique em qualquer dia no gráfico para navegar até a data</p>
+                </div>
+                <div class="chart-switcher" role="group" aria-label="Tipo de gráfico temporal">
+                  <button type="button" class="chart-switch-btn active" data-timeline-mode="prazos">Prazos por dia</button>
+                  <button type="button" class="chart-switch-btn" data-timeline-mode="entradas">Entradas / Atualizações</button>
+                </div>
+              </div>
+              <div id="chartTimeline" class="timeline-svg-wrap"></div>
+              <div class="chart-legend-inline">
+                <span><i class="legend-dot" style="background:#f5f2ed; box-shadow:0 0 8px rgba(245,242,237,0.55)"></i>Volume no dia</span>
+                <span><i class="legend-dot" style="background:#c0a68d; box-shadow:0 0 10px rgba(192,166,141,0.85)"></i>Data consultada / Tendência</span>
+                <span><i class="legend-dot" style="background:#d94854; box-shadow:0 0 8px rgba(217,72,84,0.75)"></i>Pendentes sem protocolo</span>
+              </div>
+            </article>
+
+            <!-- Gráfico 2: Responsável com Mais Processos -->
+            <article class="chart-card">
+              <div class="chart-head">
+                <div>
+                  <h2 class="chart-title">Responsável com mais processos</h2>
+                  <p class="chart-sub">Ranking da equipe • clique em um nome para filtrar a lista</p>
+                </div>
+                <span id="topOwnerBadge" class="chart-badge-pill">—</span>
+              </div>
+              <div id="chartResponsaveis" class="rank-list"></div>
+            </article>
+          </div>
+
+          <div class="analytics-row-bottom">
+            <!-- Gráfico 3: Taxa de Protocolo (Donut) -->
+            <article class="chart-card">
+              <div class="chart-head">
+                <div>
+                  <h2 class="chart-title">Status de protocolo</h2>
+                  <p class="chart-sub">Proporção de registros protocolados na carteira</p>
+                </div>
+              </div>
+              <div id="chartProtocolo" class="donut-layout"></div>
+            </article>
+
+            <!-- Gráfico 4: Distribuição por Priorização -->
+            <article class="chart-card">
+              <div class="chart-head">
+                <div>
+                  <h2 class="chart-title">Processos por priorização</h2>
+                  <p class="chart-sub">Clique em um nível para filtrar os processos</p>
+                </div>
+              </div>
+              <div id="chartPrioridades" class="mini-bars"></div>
+            </article>
+
+            <!-- Gráfico 5: Volume por Tribunal -->
+            <article class="chart-card">
+              <div class="chart-head">
+                <div>
+                  <h2 class="chart-title">Volume por tribunal</h2>
+                  <p class="chart-sub">Tribunais com maior concentração de prazos</p>
+                </div>
+              </div>
+              <div id="chartTribunais" class="mini-bars"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Busca e Filtros -->
+        <section id="docketAnchor" class="control-card" aria-label="Busca e filtros">
+          <div class="docket-section-head">
+            <h2 class="docket-section-title">Carteira de Prazos</h2>
+            <button type="button" id="btnClearFilters" class="btn btn-sm">Limpar filtros</button>
+          </div>
+          <div class="filters-top-row">
+            <div class="field-group">
+              <label for="searchInput">Buscar por processo ou cliente</label>
+              <div class="search-input-wrap">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input
+                  type="search"
+                  id="searchInput"
+                  placeholder="Ex.: 0004821-15.2025..., 0004821152025 ou nome do cliente"
+                  autocomplete="off"
+                >
+              </div>
+            </div>
+          </div>
+          <div class="filters-grid">
+            <div class="field-group">
+              <label for="filterResponsavel">Responsável</label>
+              <select id="filterResponsavel"><option value="">Todos</option></select>
+            </div>
+            <div class="field-group">
+              <label for="filterTribunal">Tribunal</label>
+              <select id="filterTribunal"><option value="">Todos</option></select>
+            </div>
+            <div class="field-group">
+              <label for="filterPriorizacao">Priorização</label>
+              <select id="filterPriorizacao"><option value="">Todas</option></select>
+            </div>
+            <div class="field-group">
+              <label for="filterTipo">Tipo</label>
+              <select id="filterTipo"><option value="">Todos</option></select>
+            </div>
+            <div class="field-group">
+              <label for="filterProtocolado">Protocolado</label>
+              <select id="filterProtocolado"><option value="">Todos</option></select>
+            </div>
+          </div>
+          <div class="filters-footer">
+            <span>Filtros atuam somente na sua tela e não alteram a visualização dos colegas nem a planilha.</span>
+            <span id="extraMatchesHint" class="hidden"></span>
+          </div>
+        </section>
+
+        <!-- Lista Executiva de Prazos -->
+        <section class="table-card" aria-label="Lista de prazos">
+          <div id="loadingState" class="loading-state">Carregando prazos da planilha...</div>
+          <div id="tableWrapper" class="table-scroll hidden">
+            <table class="agenda-table">
+              <thead>
+                <tr>
+                  <th>Atenção</th>
+                  <th>Data fatal</th>
+                  <th>Data juntada</th>
+                  <th>Processo / Tribunal</th>
+                  <th>Cliente</th>
+                  <th>Responsável</th>
+                  <th>Priorização</th>
+                  <th>Próximos passos</th>
+                  <th>Protocolado</th>
+                  <th>Ação</th>
+                </tr>
+              </thead>
+              <tbody id="agendaTableBody"></tbody>
+            </table>
+          </div>
+          <div id="emptyState" class="empty-state hidden">
+            <h3 id="emptyStateTitle">Nenhum prazo encontrado</h3>
+            <p id="emptyStateDesc">Ajuste a data consultada, os filtros ou alterne para "Toda a agenda".</p>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
 
   <!-- Modal / Drawer de Visualização Completa e Edição -->
   <div id="recordModalBackdrop" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
@@ -175,11 +342,10 @@
           <h2 id="modalTitle">Processo</h2>
           <div id="modalSubtitle" class="modal-header-sub"></div>
         </div>
-        <button type="button" id="btnCloseModal" class="btn btn-topbar btn-sm" aria-label="Fechar">Fechar &times;</button>
+        <button type="button" id="btnCloseModal" class="btn btn-ghost-dark btn-sm" aria-label="Fechar">Fechar &times;</button>
       </div>
 
       <div class="modal-body">
-        <!-- Aviso de conflito de edição simultânea -->
         <div id="conflictPanel" class="conflict-panel hidden">
           <h4>Conflito de edição detectado</h4>
           <p id="conflictMessage" style="margin:0 0 8px;"></p>
@@ -189,12 +355,10 @@
           </button>
         </div>
 
-        <!-- Aviso para usuário somente leitura -->
         <div id="viewerNotice" class="alert alert-warn hidden">
           <span>Seu acesso a esta planilha é <strong>somente leitura</strong>. Você pode consultar todos os campos, mas o salvamento está bloqueado.</span>
         </div>
 
-        <!-- Seção 1: Identificação e Metadados -->
         <h3 class="section-title">Dados do Registro (Colunas A a P)</h3>
         <div class="detail-grid">
           <div class="detail-item">
@@ -223,7 +387,6 @@
           </div>
         </div>
 
-        <!-- Seção 2: Quatro Datas Preservadas Separadamente -->
         <h3 class="section-title">Datas de Prazo e Juntada (preservadas separadamente)</h3>
         <div class="dates-grid">
           <div class="detail-item date-box">
@@ -234,24 +397,23 @@
             <div class="detail-label">Limite juntada (D)</div>
             <div class="detail-value mono" id="detPrazoLimiteJuntada"></div>
           </div>
-          <div class="detail-item date-box">
+          <div class="detail-item date-box date-accent">
             <div class="detail-label">Data fatal (K)</div>
             <div class="detail-value mono" id="detDataFatal"></div>
           </div>
-          <div class="detail-item date-box">
+          <div class="detail-item date-box date-accent">
             <div class="detail-label">Data da juntada (L)</div>
             <div class="detail-value mono" id="detDataJuntada"></div>
           </div>
         </div>
 
-        <!-- Seção 3: Campos Editáveis -->
         <h3 class="section-title">Atualização da Controladoria</h3>
         <form id="editRecordForm" onsubmit="return false;">
           <div class="edit-grid">
             <div class="field-group"><label for="edit_numeroProcesso">Número do processo</label><input type="text" id="edit_numeroProcesso"></div>
             <div class="field-group"><label for="edit_cliente">Cliente</label><input type="text" id="edit_cliente"></div>
-            <div class="field-group"><label for="edit_tribunal">Tribunal</label><input type="text" id="edit_tribunal"></div>
-            <div class="field-group"><label for="edit_tipo">Tipo</label><input type="text" id="edit_tipo"></div>
+            <div class="field-group"><label for="edit_tribunal">Tribunal</label><input type="text" id="edit_tribunal" list="tribunalSuggestions" placeholder="Escolha um tribunal já cadastrado ou digite outro" autocomplete="off"><datalist id="tribunalSuggestions"></datalist></div>
+            <div class="field-group"><label for="edit_tipo">Tipo</label><input type="text" id="edit_tipo" list="tipoSuggestions" placeholder="Ex.: Prazo fatal, Renunciar..." autocomplete="off"><datalist id="tipoSuggestions"></datalist></div>
             <div class="field-group"><label for="edit_fimDoPrazo">Fim do prazo</label><input type="date" id="edit_fimDoPrazo"></div>
             <div class="field-group"><label for="edit_prazoLimiteJuntada">Limite para juntada</label><input type="date" id="edit_prazoLimiteJuntada"></div>
             <div class="field-group"><label for="edit_dataFatal">Data fatal</label><input type="date" id="edit_dataFatal"></div>
@@ -277,11 +439,11 @@
               <div id="detAttentionTags" style="padding-top:6px;"></div>
             </div>
             <div class="field-group span-2">
-              <label for="editObservacaoM">Observação (M)</label>
+              <label for="editObservacaoM">Observação da Controladoria (Col. M)</label>
               <textarea id="editObservacaoM"></textarea>
             </div>
             <div class="field-group span-2">
-              <label for="editObservacaoP">Observação (P)</label>
+              <label for="editObservacaoP">Observação do Advogado (Col. P)</label>
               <textarea id="editObservacaoP"></textarea>
             </div>
           </div>
@@ -290,7 +452,6 @@
         <h3 class="section-title">Histórico do processo</h3>
         <ul id="recordHistory"></ul>
 
-        <!-- Painel de Confirmação Antes de Gravar -->
         <div id="confirmSavePanel" class="confirm-panel hidden">
           <h4>Confirmar gravação na planilha</h4>
           <div id="confirmContextBox" class="confirm-context"></div>
@@ -312,16 +473,36 @@
     </div>
   </div>
 
+  <!-- Modal de Gerenciamento de Listas -->
   <dialog id="catalogDialog" aria-labelledby="catalogTitle">
-    <h2 id="catalogTitle">Gerenciar listas</h2>
-    <div class="field-group"><label for="catalogKey">Lista</label><select id="catalogKey"><option value="responsavel">Responsáveis</option><option value="priorizacao">Níveis de priorização</option></select></div>
-    <ul id="catalogItems"></ul>
-    <form id="catalogForm"><label for="catalogName">Nova opção</label>
-      <input id="catalogName" maxlength="120" required><button class="btn btn-primary">Adicionar</button>
-    </form>
-    <p id="catalogStatus" role="status"></p><button class="btn" id="closeCatalog">Fechar</button>
+    <div class="catalog-shell">
+      <div class="catalog-header">
+        <h2 id="catalogTitle">Gerenciar listas</h2>
+      </div>
+      <div class="catalog-body">
+        <div class="field-group">
+          <label for="catalogKey">Lista</label>
+          <select id="catalogKey">
+            <option value="responsavel">Responsáveis</option>
+            <option value="priorizacao">Níveis de priorização</option>
+          </select>
+        </div>
+        <ul id="catalogItems"></ul>
+        <form id="catalogForm">
+          <div class="field-group">
+            <label for="catalogName">Nova opção</label>
+            <input id="catalogName" maxlength="120" placeholder="Digite o nome e clique em Adicionar" required>
+          </div>
+          <button class="btn btn-primary">Adicionar</button>
+        </form>
+        <div class="catalog-footer">
+          <p id="catalogStatus" role="status"></p>
+          <button type="button" class="btn" id="closeCatalog">Fechar</button>
+        </div>
+      </div>
+    </div>
   </dialog>
-  <!-- Toasts -->
+
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
 
   <?!= include('AppScript'); ?>

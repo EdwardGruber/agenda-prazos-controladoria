@@ -15,8 +15,8 @@
     { key: 'responsavel', elId: 'editResponsavel', label: 'Responsável' },
     { key: 'priorizacao', elId: 'editPriorizacao', label: 'Priorização' },
     { key: 'protocolado', elId: 'editProtocolado', label: 'Protocolado' },
-    { key: 'observacaoM', elId: 'editObservacaoM', label: 'Observação (M)' },
-    { key: 'observacaoP', elId: 'editObservacaoP', label: 'Observação (P)' }
+    { key: 'observacaoM', elId: 'editObservacaoM', label: 'Observação da Controladoria' },
+    { key: 'observacaoP', elId: 'editObservacaoP', label: 'Observação do Advogado' }
   ];
 
   var PRIORITY_RANK = {
@@ -65,7 +65,14 @@
     selectedRecordKey: null,
     selectedRecord: null,
     isSaving: false,
-    pendingDiffs: []
+    pendingDiffs: [],
+    showAnalytics: true,
+    timelineMode: 'prazos', // 'prazos' | 'entradas'
+    prevKpis: { pending: 0, fatal: 0, juntada: 0, visible: 0, protoPct: 0 },
+    hasAnimatedInitial: false,
+    animateChartsNext: true,
+    lastCreatedId: null,
+    lastCreatedUntil: 0
   };
 
   /* -------------------- Adaptador de Transporte (GAS vs Demo Local) -------------------- */
@@ -305,19 +312,58 @@
     btnExecuteSave: document.getElementById('btnExecuteSave'),
     btnReviewSave: document.getElementById('btnReviewSave'),
     modalFooterStatus: document.getElementById('modalFooterStatus'),
-    toastContainer: document.getElementById('toastContainer')
+    toastContainer: document.getElementById('toastContainer'),
+    navDashboard: document.getElementById('navDashboard'),
+    navAttention: document.getElementById('navAttention'),
+    navAll: document.getElementById('navAll'),
+    navCountAttention: document.getElementById('navCountAttention'),
+    navCountAll: document.getElementById('navCountAll'),
+    btnToggleAnalytics: document.getElementById('btnToggleAnalytics'),
+    analyticsSection: document.getElementById('analyticsSection'),
+    timelineChartTitle: document.getElementById('timelineChartTitle'),
+    timelineChartSub: document.getElementById('timelineChartSub'),
+    chartTimeline: document.getElementById('chartTimeline'),
+    chartResponsaveis: document.getElementById('chartResponsaveis'),
+    topOwnerBadge: document.getElementById('topOwnerBadge'),
+    chartProtocolo: document.getElementById('chartProtocolo'),
+    chartPrioridades: document.getElementById('chartPrioridades'),
+    chartTribunais: document.getElementById('chartTribunais'),
+    docketAnchor: document.getElementById('docketAnchor'),
+    heroSparkline: document.getElementById('heroSparkline'),
+    tribunalSuggestions: document.getElementById('tribunalSuggestions'),
+    tipoSuggestions: document.getElementById('tipoSuggestions')
   };
 
   /* -------------------- Feedback Visual -------------------- */
 
-  function showToast(message, type) {
+  function showToast(message, type, durationMs) {
+    var kind = type || 'info';
+    var isRoutine = kind === 'success' || kind === 'info';
+
+    // Evita empilhar várias notificações cobrindo a tabela ao alterar vários registros seguidos
+    if (isRoutine) {
+      var prevRoutine = els.toastContainer.querySelectorAll('.toast.success, .toast.info');
+      for (var i = 0; i < prevRoutine.length; i++) {
+        if (prevRoutine[i].parentNode) prevRoutine[i].parentNode.removeChild(prevRoutine[i]);
+      }
+    }
+
     var div = document.createElement('div');
-    div.className = 'toast ' + (type || '');
+    div.className = 'toast ' + kind;
     div.textContent = message;
-    els.toastContainer.appendChild(div);
-    setTimeout(function () {
+    div.title = 'Clique para fechar';
+    div.addEventListener('click', function () {
       if (div.parentNode) div.parentNode.removeChild(div);
-    }, 4500);
+    });
+    els.toastContainer.appendChild(div);
+
+    var ms = durationMs || (isRoutine ? 1800 : 3600);
+    setTimeout(function () {
+      div.classList.add('is-leaving');
+      setTimeout(function () {
+        if (div.parentNode) div.parentNode.removeChild(div);
+      }, 220);
+    }, ms);
   }
 
   function showGlobalAlert(message, type) {
@@ -347,13 +393,38 @@
     }
   }
 
+  function populateDatalist(listEl, values) {
+    if (!listEl) return;
+    var seen = {};
+    var unique = [];
+    for (var i = 0; i < values.length; i++) {
+      var v = String(values[i] || '').trim();
+      var k = normalizeText(v);
+      if (v && !seen[k]) {
+        seen[k] = true;
+        unique.push(v);
+      }
+    }
+    unique.sort(function (a, b) { return a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }); });
+    listEl.innerHTML = unique.map(function (v) {
+      return '<option value="' + escapeHtml(v) + '"></option>';
+    }).join('');
+  }
+
   function populateAllFilterSelects() {
+    var recordTribunais = state.records.map(function (r) { return r.tribunal; });
+    var recordTipos = state.records.map(function (r) { return r.tipo; });
+    var allTribunais = (state.options.tribunal || []).concat(recordTribunais);
+    var allTipos = (state.options.tipo || []).concat(recordTipos);
+
     populateSelect(els.filterResponsavel, state.options.responsavel || [], 'Todos', state.filters.responsavel);
     populateSelect(els.filterTribunal, state.options.tribunal || [], 'Todos', state.filters.tribunal);
     populateSelect(els.filterPriorizacao, state.options.priorizacao || [], 'Todas', state.filters.priorizacao);
     populateSelect(els.filterTipo, state.options.tipo || [], 'Todos', state.filters.tipo);
     populateSelect(els.filterProtocolado, state.options.protocolado || [], 'Todos', state.filters.protocolado);
 
+    populateDatalist(els.tribunalSuggestions, allTribunais);
+    populateDatalist(els.tipoSuggestions, allTipos);
   }
 
   /* -------------------- Renderização Principal -------------------- */
@@ -405,6 +476,61 @@
     return '<div class="badge-stack">' + parts.join('') + '</div>';
   }
 
+  function prefersReducedMotion() {
+    return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  function animateNumber(el, target, fromVal, suffix, durationMs) {
+    if (!el) return;
+    var sfx = suffix || '';
+    var to = Number(target) || 0;
+    var from = Number(fromVal) || 0;
+    if (prefersReducedMotion() || from === to) {
+      el.textContent = String(to) + sfx;
+      return;
+    }
+    var ms = durationMs || 620;
+    var t0 = performance.now();
+    function tick(now) {
+      var p = Math.max(0, Math.min(1, (now - t0) / ms));
+      var eased = 1 - Math.pow(1 - p, 3);
+      var cur = p >= 1 ? to : Math.round(from + (to - from) * eased);
+      el.textContent = String(cur) + sfx;
+      if (p < 1 && el.isConnected) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function rowPriorityClass(prio) {
+    var n = normalizeText(prio);
+    if (n === 'urgente') return 'row-prio-urgente';
+    if (n === 'alta') return 'row-prio-alta';
+    if (n === 'media') return 'row-prio-media';
+    if (n === 'baixa') return 'row-prio-baixa';
+    if (n === 'sem urgencia') return 'row-prio-sem-urgencia';
+    return '';
+  }
+
+  function buildSmoothBezierPath(points) {
+    if (!points || points.length === 0) return '';
+    if (points.length < 3) {
+      return points.map(function (p, i) { return (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1); }).join('');
+    }
+    var d = 'M' + points[0][0].toFixed(1) + ' ' + points[0][1].toFixed(1);
+    for (var i = 0; i < points.length - 1; i++) {
+      var p0 = points[i - 1] || points[i];
+      var p1 = points[i];
+      var p2 = points[i + 1];
+      var p3 = points[i + 2] || p2;
+      var c1x = p1[0] + (p2[0] - p0[0]) / 6;
+      var c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      var c2x = p2[0] - (p3[0] - p1[0]) / 6;
+      var c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += 'C' + c1x.toFixed(1) + ' ' + c1y.toFixed(1) + ' ' + c2x.toFixed(1) + ' ' + c2y.toFixed(1) + ' ' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1);
+    }
+    return d;
+  }
+
   function renderAgenda() {
     var refIso = state.referenceDateIso || state.meta.todayIso;
     els.referenceDateDisplay.textContent = formatDateHeaderPtBr(refIso);
@@ -424,22 +550,60 @@
       if (cls.inAttentionView) attentionAll.push(rec);
     }
 
-    els.kpiPending.textContent = String(pendingCount);
-    els.kpiFatal.textContent = String(fatalCount);
-    els.kpiJuntada.textContent = String(juntadaCount);
+    var shouldAnimateNumbers = !state.hasAnimatedInitial || state.animateChartsNext;
+    var fromPending = !state.hasAnimatedInitial ? 0 : state.prevKpis.pending;
+    var fromFatal = !state.hasAnimatedInitial ? 0 : state.prevKpis.fatal;
+    var fromJuntada = !state.hasAnimatedInitial ? 0 : state.prevKpis.juntada;
+
+    if (shouldAnimateNumbers) {
+      animateNumber(els.kpiPending, pendingCount, fromPending, '', 680);
+      animateNumber(els.kpiFatal, fatalCount, fromFatal, '', 680);
+      animateNumber(els.kpiJuntada, juntadaCount, fromJuntada, '', 680);
+    } else {
+      els.kpiPending.textContent = String(pendingCount);
+      els.kpiFatal.textContent = String(fatalCount);
+      els.kpiJuntada.textContent = String(juntadaCount);
+    }
+    state.prevKpis.pending = pendingCount;
+    state.prevKpis.fatal = fatalCount;
+    state.prevKpis.juntada = juntadaCount;
 
     els.countTabAttention.textContent = String(attentionAll.length);
     els.countTabAll.textContent = String(state.records.length);
+    if (els.navCountAttention) els.navCountAttention.textContent = String(attentionAll.length);
+    if (els.navCountAll) els.navCountAll.textContent = String(state.records.length);
 
     els.tabAttention.classList.toggle('active', state.scope === 'attention');
     els.tabAttention.setAttribute('aria-selected', String(state.scope === 'attention'));
     els.tabAll.classList.toggle('active', state.scope === 'all');
     els.tabAll.setAttribute('aria-selected', String(state.scope === 'all'));
 
+    if (els.navDashboard) {
+      els.navDashboard.classList.toggle('active', state.showAnalytics);
+      els.navAttention.classList.toggle('active', !state.showAnalytics && state.scope === 'attention');
+      els.navAll.classList.toggle('active', !state.showAnalytics && state.scope === 'all');
+    }
+    if (els.analyticsSection) {
+      els.analyticsSection.classList.toggle('hidden', !state.showAnalytics);
+    }
+    if (els.btnToggleAnalytics) {
+      els.btnToggleAnalytics.textContent = state.showAnalytics ? 'Ocultar gráficos' : 'Mostrar gráficos';
+    }
+
     var baseList = state.scope === 'attention' ? attentionAll : state.records;
     var visible = sortRecords(baseList.filter(matchesFilters), refIso);
 
-    els.kpiVisible.textContent = String(visible.length);
+    var fromVisible = !state.hasAnimatedInitial ? 0 : state.prevKpis.visible;
+    if (shouldAnimateNumbers) {
+      animateNumber(els.kpiVisible, visible.length, fromVisible, '', 680);
+    } else {
+      els.kpiVisible.textContent = String(visible.length);
+    }
+    state.prevKpis.visible = visible.length;
+
+    renderAnalytics(refIso, shouldAnimateNumbers);
+    state.animateChartsNext = false;
+
     els.kpiVisibleSub.textContent = state.scope === 'attention'
       ? 'Na visão de atenção do dia (com seus filtros)'
       : 'Em toda a agenda (com seus filtros)';
@@ -493,7 +657,9 @@
     els.emptyState.classList.add('hidden');
     els.tableWrapper.classList.remove('hidden');
 
-    var rowsHtml = visible.map(function (rec) {
+    var nowMs = Date.now();
+    var doRowCascade = !state.hasAnimatedInitial;
+    var rowsHtml = visible.map(function (rec, rowIdx) {
       var cls = classifyForDate(rec, refIso);
       var key = recordKey(rec);
       var fatalDisplay = (rec.dataFatal && rec.dataFatal.display) || '';
@@ -513,10 +679,27 @@
         : (isProtocoladoNao(rec.protocolado) ? 'prot-nao' : 'badge-neutral');
 
       var actionLabel = state.userAccess.canEdit ? 'Abrir / Editar' : 'Consultar';
+      var isJustCreated = Boolean(state.lastCreatedId && rec.id === state.lastCreatedId && nowMs < state.lastCreatedUntil);
+
+      var rowClasses = [];
+      if (cls.isPendingReview) rowClasses.push('row-pending');
+      var prioRowCls = rowPriorityClass(rec.priorizacao);
+      if (prioRowCls) rowClasses.push(prioRowCls);
+      if (isJustCreated) rowClasses.push('row-just-created');
+      else if (doRowCascade && rowIdx < 16) rowClasses.push('row-animate-in');
+
+      var rowStyle = doRowCascade && !isJustCreated && rowIdx < 16
+        ? ' style="--row-delay:' + (rowIdx * 36) + 'ms"'
+        : '';
+
+      var attentionHtml = renderAttentionBadgesHtml(cls);
+      if (isJustCreated) {
+        attentionHtml = attentionHtml.replace('<div class="badge-stack">', '<div class="badge-stack"><span class="badge badge-novo-proc">Novo</span>');
+      }
 
       return (
-        '<tr data-record-key="' + escapeHtml(key) + '" class="' + (cls.isPendingReview ? 'row-pending' : '') + '">' +
-          '<td>' + renderAttentionBadgesHtml(cls) + '</td>' +
+        '<tr data-record-key="' + escapeHtml(key) + '" class="' + rowClasses.join(' ') + '"' + rowStyle + '>' +
+          '<td>' + attentionHtml + '</td>' +
           '<td class="' + fatalClass + '">' + escapeHtml(fatalDisplay) + '</td>' +
           '<td class="' + juntadaClass + '">' + escapeHtml(juntadaDisplay) + '</td>' +
           '<td class="col-processo">' +
@@ -527,7 +710,11 @@
             '</div>' +
           '</td>' +
           '<td class="col-cliente">' + escapeHtml(rec.cliente || '') + '</td>' +
-          '<td class="col-resp">' + escapeHtml(rec.responsavel || '') + '</td>' +
+          '<td class="col-resp">' +
+            (rec.responsavel
+              ? '<div class="resp-cell"><span class="resp-avatar-sm">' + escapeHtml(getInitials(rec.responsavel)) + '</span><span>' + escapeHtml(rec.responsavel) + '</span></div>'
+              : '<span style="color:var(--text-muted)">—</span>') +
+          '</td>' +
           '<td>' +
             (rec.priorizacao
               ? '<span class="badge ' + priorityClass(rec.priorizacao) + '">' + escapeHtml(rec.priorizacao) + '</span>'
@@ -536,10 +723,23 @@
           '<td class="col-passos"><div class="passos-preview" title="' + escapeHtml(rec.proximosPassos || '') + '">' +
             (state.userAccess.canEdit ? '<button type="button" data-steps class="steps-edit">' + escapeHtml(rec.proximosPassos || 'Escrever próximos passos') + '</button>' : escapeHtml(rec.proximosPassos || '')) +
           '</div></td>' +
-          '<td>' +
-            (rec.protocolado
-              ? '<span class="badge ' + protClass + '">' + escapeHtml(rec.protocolado) + '</span>'
-              : '') +
+          '<td class="col-protocolo">' +
+            (function () {
+              var isSim = isProtocoladoSim(rec.protocolado);
+              var labelTxt = isSim ? 'Sim' : 'Não';
+              var nextTxt = isSim ? 'Não' : 'Sim';
+              var checkSvg = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>';
+              if (state.userAccess.canEdit) {
+                return '<button type="button" class="proto-check ' + (isSim ? 'is-sim' : 'is-nao') + '" data-toggle-protocolado="' + nextTxt + '" aria-pressed="' + (isSim ? 'true' : 'false') + '" title="Clique para alternar Protocolado para ' + nextTxt + '">' +
+                  '<span class="proto-check-box">' + checkSvg + '</span>' +
+                  '<span>' + labelTxt + '</span>' +
+                '</button>';
+              }
+              return '<span class="proto-check is-readonly ' + (isSim ? 'is-sim' : 'is-nao') + '" title="Protocolado: ' + labelTxt + ' (somente leitura)">' +
+                '<span class="proto-check-box">' + checkSvg + '</span>' +
+                '<span>' + labelTxt + '</span>' +
+              '</span>';
+            })() +
           '</td>' +
           '<td><button type="button" class="btn btn-sm" data-open-key="' + escapeHtml(key) + '">' + actionLabel + '</button></td>' +
         '</tr>'
@@ -547,6 +747,413 @@
     }).join('');
 
     els.agendaTableBody.innerHTML = rowsHtml;
+    if (state.records.length > 0) {
+      state.hasAnimatedInitial = true;
+    }
+  }
+
+  /* -------------------- Dashboard Analítico (Gráficos Interativos) -------------------- */
+
+  function getInitials(name) {
+    var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '—';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  function parseBrDatePrefixToIso(text) {
+    var match = String(text || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (!match) return null;
+    return match[3] + '-' + String(match[2]).padStart(2, '0') + '-' + String(match[1]).padStart(2, '0');
+  }
+
+  function formatShortBr(iso) {
+    if (!iso || iso.length < 10) return '';
+    return iso.slice(8, 10) + '/' + iso.slice(5, 7);
+  }
+
+  function renderHeroSparkline(buckets, animate) {
+    if (!els.heroSparkline) return;
+    if (!buckets || buckets.length < 2) {
+      els.heroSparkline.innerHTML = '';
+      return;
+    }
+    var w = 220;
+    var h = 96;
+    var maxV = Math.max.apply(null, buckets.map(function (b) { return b.total; }).concat([1]));
+    var pts = buckets.map(function (b, i) {
+      var x = 8 + (i * (w - 18)) / Math.max(1, buckets.length - 1);
+      var y = 14 + ((maxV - b.total) * (h - 28)) / maxV;
+      return [x, y];
+    });
+    var dLine = buildSmoothBezierPath(pts);
+    var dArea = dLine + ' L' + pts[pts.length - 1][0].toFixed(1) + ' ' + h + ' L' + pts[0][0].toFixed(1) + ' ' + h + ' Z';
+    var refIdx = buckets.findIndex(function (b) { return b.isRef; });
+    if (refIdx < 0) refIdx = pts.length - 1;
+    var refPt = pts[refIdx];
+    var anim = animate && !prefersReducedMotion();
+
+    els.heroSparkline.innerHTML =
+      '<svg viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' +
+        '<defs>' +
+          '<linearGradient id="heroSparkGrad" x1="0" y1="0" x2="0" y2="1">' +
+            '<stop offset="0%" stop-color="#c0a68d" stop-opacity="0.34" />' +
+            '<stop offset="100%" stop-color="#c0a68d" stop-opacity="0" />' +
+          '</linearGradient>' +
+          '<filter id="heroSparkGlow" filterUnits="userSpaceOnUse" x="-16" y="-16" width="' + (w + 32) + '" height="' + (h + 32) + '">' +
+            '<feGaussianBlur in="SourceGraphic" stdDeviation="3" result="b" />' +
+            '<feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>' +
+          '</filter>' +
+        '</defs>' +
+        '<path' + (anim ? ' class="neon-surge" style="--surge-delay:0.45s"' : '') + ' d="' + dArea + '" fill="url(#heroSparkGrad)" />' +
+        '<path' + (anim ? ' class="neon-draw"' : '') + ' filter="url(#heroSparkGlow)" pathLength="1" d="' + dLine + '" fill="none" stroke="#c0a68d" stroke-width="2.1" stroke-linecap="round" />' +
+        '<g class="neon-beacon' + (anim ? ' neon-surge' : '') + '" style="--surge-delay:0.85s">' +
+          '<circle class="neon-halo" cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="8" fill="#c0a68d" opacity="0.35" />' +
+          '<circle cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="3.6" fill="#e5d2be" stroke="#0c0c0d" stroke-width="1.5" />' +
+        '</g>' +
+      '</svg>';
+  }
+
+  function renderTimelineChart(records, refIso, animate) {
+    if (!els.chartTimeline) return;
+    var mode = state.timelineMode || 'prazos';
+    var buckets = [];
+    var doAnim = Boolean(animate) && !prefersReducedMotion();
+
+    if (mode === 'prazos') {
+      if (els.timelineChartTitle) els.timelineChartTitle.textContent = 'Fluxo de prazos por dia';
+      if (els.timelineChartSub) els.timelineChartSub.textContent = 'Prazos fatais e juntadas ao redor da data consultada • clique em um dia para navegar';
+
+      for (var d = -4; d <= 5; d++) {
+        var dayIso = shiftIsoDate(refIso, d);
+        var total = 0;
+        var pending = 0;
+        for (var i = 0; i < records.length; i++) {
+          var r = records[i];
+          var fIso = r.dataFatal && r.dataFatal.iso;
+          var jIso = r.dataJuntada && r.dataJuntada.iso;
+          if (fIso === dayIso || jIso === dayIso) {
+            total++;
+            if (isProtocoladoNao(r.protocolado)) pending++;
+          }
+        }
+        buckets.push({ iso: dayIso, label: formatShortBr(dayIso), total: total, pending: pending, isRef: dayIso === refIso });
+      }
+      renderHeroSparkline(buckets, doAnim);
+    } else {
+      if (els.timelineChartTitle) els.timelineChartTitle.textContent = 'Entrada e movimentação de processos por data';
+      if (els.timelineChartSub) els.timelineChartSub.textContent = 'Volume de entradas (histórico de criação) e atualizações registradas na agenda';
+
+      var map = {};
+      for (var k = 0; k < records.length; k++) {
+        var rec = records[k];
+        var createdEntry = (rec.history || []).find(function (e) { return normalizeText(e.action) === 'criacao'; });
+        var iso = parseBrDatePrefixToIso((createdEntry && createdEntry.at) || rec.ultimaAtualizacao);
+        if (!iso) continue;
+        if (!map[iso]) map[iso] = { iso: iso, label: formatShortBr(iso), total: 0, pending: 0, isRef: iso === refIso };
+        map[iso].total++;
+        if (isProtocoladoNao(rec.protocolado)) map[iso].pending++;
+      }
+      buckets = Object.keys(map).sort().slice(-10).map(function (key) { return map[key]; });
+      if (buckets.length === 0) {
+        els.chartTimeline.innerHTML = '<div style="padding:36px 12px; text-align:center; color:#aba399; font-size:13px;">Sem datas de entrada ou atualização disponíveis.</div>';
+        return;
+      }
+    }
+
+    var maxVal = 1;
+    for (var m = 0; m < buckets.length; m++) {
+      if (buckets[m].total > maxVal) maxVal = buckets[m].total;
+    }
+
+    var svgW = 560;
+    var svgH = 216;
+    var padL = 24;
+    var padR = 16;
+    var padT = 28;
+    var padB = 34;
+    var plotW = svgW - padL - padR;
+    var plotH = svgH - padT - padB;
+    var step = plotW / Math.max(buckets.length, 1);
+    var barW = Math.min(32, Math.max(16, step * 0.52));
+    var baseY = padT + plotH;
+
+    var gridLines = '';
+    for (var g = 0; g <= 3; g++) {
+      var gy = padT + (plotH * g) / 3;
+      gridLines += '<line x1="' + padL + '" y1="' + gy.toFixed(1) + '" x2="' + (svgW - padR) + '" y2="' + gy.toFixed(1) + '" stroke="' + (g === 3 ? 'rgba(192,166,141,0.34)' : 'rgba(255,255,255,0.09)') + '"' + (g < 3 ? ' stroke-dasharray="2 5"' : '') + ' stroke-width="1" />';
+    }
+
+    var linePts = [];
+    var barsSvg = '';
+    var refPt = null;
+
+    for (var b = 0; b < buckets.length; b++) {
+      var item = buckets[b];
+      var cx = padL + step * b + step / 2;
+      var h = item.total > 0 ? Math.max(10, (item.total / maxVal) * plotH) : 2;
+      var y = baseY - h;
+      var lineY = baseY - (item.total / maxVal) * plotH;
+      linePts.push([cx, lineY]);
+      if (item.isRef) refPt = [cx, lineY];
+
+      var bx = cx - barW / 2;
+      var rTop = Math.min(5, barW / 2, h);
+      var barPath = 'M' + bx.toFixed(1) + ' ' + baseY.toFixed(1) +
+        ' V' + (y + rTop).toFixed(1) +
+        ' Q' + bx.toFixed(1) + ' ' + y.toFixed(1) + ' ' + (bx + rTop).toFixed(1) + ' ' + y.toFixed(1) +
+        ' H' + (bx + barW - rTop).toFixed(1) +
+        ' Q' + (bx + barW).toFixed(1) + ' ' + y.toFixed(1) + ' ' + (bx + barW).toFixed(1) + ' ' + (y + rTop).toFixed(1) +
+        ' V' + baseY.toFixed(1) + ' Z';
+
+      var barFill = item.isRef ? 'url(#neonBarChampagne)' : (item.total > 0 ? 'url(#neonBarIvory)' : 'rgba(255,255,255,0.08)');
+      var barFilter = item.isRef ? ' filter="url(#neonGlowSoft)"' : '';
+      var labelColor = item.isRef ? '#e4cfba' : '#968f86';
+      var labelWeight = item.isRef ? '700' : '500';
+      var pendingH = item.pending > 0 ? Math.min(h, Math.max(4, (item.pending / maxVal) * plotH)) : 0;
+      var animAttr = doAnim ? ' class="timeline-bar timeline-bar-anim" style="--bar-delay:' + (b * 45) + 'ms"' : ' class="timeline-bar"';
+
+      barsSvg +=
+        '<g class="timeline-bar-group" data-chart-date="' + escapeHtml(item.iso) + '">' +
+          '<title>' + escapeHtml(item.label + ': ' + item.total + ' processo(s), ' + item.pending + ' não protocolado(s)') + '</title>' +
+          (item.isRef ? '<line x1="' + cx.toFixed(1) + '" y1="' + padT + '" x2="' + cx.toFixed(1) + '" y2="' + baseY.toFixed(1) + '" stroke="rgba(192,166,141,0.38)" stroke-dasharray="3 3" stroke-width="1" />' : '') +
+          '<path d="' + barPath + '" fill="' + barFill + '"' + barFilter + animAttr + ' />' +
+          (pendingH > 0 && item.total > 0 && !item.isRef
+            ? '<rect x="' + bx.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + Math.min(4, pendingH).toFixed(1) + '" rx="2" fill="#d94854"' + (doAnim ? ' class="neon-surge" style="--surge-delay:' + (260 + b * 45) + 'ms"' : '') + ' />'
+            : '') +
+          (item.total > 0
+            ? '<text x="' + cx.toFixed(1) + '" y="' + (y - 9).toFixed(1) + '" text-anchor="middle" font-size="11" font-weight="700" font-family="var(--font-mono)" fill="' + (item.isRef ? '#ead7c3' : '#f5f2ed') + '"' + (doAnim ? ' class="neon-surge" style="--surge-delay:' + (220 + b * 45) + 'ms"' : '') + '>' + item.total + '</text>'
+            : '') +
+          '<text x="' + cx.toFixed(1) + '" y="' + (svgH - 10) + '" text-anchor="middle" font-size="10.5" font-weight="' + labelWeight + '" font-family="var(--font-mono)" fill="' + labelColor + '">' + escapeHtml(item.label) + '</text>' +
+        '</g>';
+    }
+
+    var curveSvg = '';
+    if (linePts.length > 1) {
+      var smoothD = buildSmoothBezierPath(linePts);
+      var areaD = smoothD + ' L' + linePts[linePts.length - 1][0].toFixed(1) + ' ' + baseY.toFixed(1) + ' L' + linePts[0][0].toFixed(1) + ' ' + baseY.toFixed(1) + ' Z';
+      curveSvg =
+        '<path' + (doAnim ? ' class="neon-surge" style="--surge-delay:0.35s"' : '') + ' d="' + areaD + '" fill="url(#champagneNeonArea)" />' +
+        '<path' + (doAnim ? ' class="neon-draw"' : '') + ' filter="url(#neonGlowLine)" pathLength="1" d="' + smoothD + '" fill="none" stroke="#d5bc9f" stroke-width="2.3" stroke-linecap="round" />';
+    }
+
+    var beaconSvg = refPt
+      ? '<g class="neon-beacon' + (doAnim ? ' neon-surge' : '') + '" style="--surge-delay:0.75s">' +
+          '<circle class="neon-halo" cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="10" fill="#c0a68d" opacity="0.45" />' +
+          '<circle cx="' + refPt[0].toFixed(1) + '" cy="' + refPt[1].toFixed(1) + '" r="4.5" fill="#ead7c3" stroke="#0c0c0d" stroke-width="2" />' +
+        '</g>'
+      : '';
+
+    var defsSvg =
+      '<defs>' +
+        '<linearGradient id="neonBarChampagne" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="#e5cfb8" stop-opacity="1" />' +
+          '<stop offset="65%" stop-color="#c0a68d" stop-opacity="0.88" />' +
+          '<stop offset="100%" stop-color="#c0a68d" stop-opacity="0.22" />' +
+        '</linearGradient>' +
+        '<linearGradient id="neonBarIvory" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="#ffffff" stop-opacity="0.92" />' +
+          '<stop offset="100%" stop-color="#c0a68d" stop-opacity="0.22" />' +
+        '</linearGradient>' +
+        '<linearGradient id="champagneNeonArea" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="#c0a68d" stop-opacity="0.26" />' +
+          '<stop offset="100%" stop-color="#c0a68d" stop-opacity="0" />' +
+        '</linearGradient>' +
+        '<filter id="neonGlowLine" filterUnits="userSpaceOnUse" x="-20" y="-20" width="' + (svgW + 40) + '" height="' + (svgH + 40) + '">' +
+          '<feGaussianBlur in="SourceGraphic" stdDeviation="3.4" result="b" />' +
+          '<feComponentTransfer in="b" result="c"><feFuncA type="linear" slope="0.9" /></feComponentTransfer>' +
+          '<feMerge><feMergeNode in="c" /><feMergeNode in="SourceGraphic" /></feMerge>' +
+        '</filter>' +
+        '<filter id="neonGlowSoft" filterUnits="userSpaceOnUse" x="-20" y="-20" width="' + (svgW + 40) + '" height="' + (svgH + 40) + '">' +
+          '<feGaussianBlur in="SourceGraphic" stdDeviation="2.6" result="b" />' +
+          '<feComponentTransfer in="b" result="c"><feFuncA type="linear" slope="0.6" /></feComponentTransfer>' +
+          '<feMerge><feMergeNode in="c" /><feMergeNode in="SourceGraphic" /></feMerge>' +
+        '</filter>' +
+      '</defs>';
+
+    els.chartTimeline.innerHTML =
+      '<svg class="timeline-svg" viewBox="0 0 ' + svgW + ' ' + svgH + '" role="img" aria-label="Gráfico neon de volume por data">' +
+        defsSvg + gridLines + curveSvg + barsSvg + beaconSvg +
+      '</svg>';
+  }
+
+  function renderResponsaveisChart(records, animate) {
+    if (!els.chartResponsaveis) return;
+    var doAnim = Boolean(animate) && !prefersReducedMotion();
+    var counts = {};
+    for (var i = 0; i < records.length; i++) {
+      var name = String(records[i].responsavel || '').trim() || 'Não atribuído';
+      if (!counts[name]) counts[name] = { name: name, total: 0, pending: 0 };
+      counts[name].total++;
+      if (isProtocoladoNao(records[i].protocolado)) counts[name].pending++;
+    }
+    var ranked = Object.keys(counts).map(function (k) { return counts[k]; }).sort(function (a, b) {
+      if (b.total !== a.total) return b.total - a.total;
+      return a.name.localeCompare(b.name, 'pt-BR');
+    });
+
+    if (ranked.length === 0) {
+      if (els.topOwnerBadge) els.topOwnerBadge.textContent = 'Sem dados';
+      els.chartResponsaveis.innerHTML = '<div style="color:var(--text-muted); font-size:13px;">Nenhum processo carregado.</div>';
+      return;
+    }
+
+    var top = ranked[0];
+    if (els.topOwnerBadge) {
+      els.topOwnerBadge.textContent = 'Líder: ' + top.name + ' (' + top.total + ')';
+    }
+
+    var maxTotal = Math.max(top.total, 1);
+    els.chartResponsaveis.innerHTML = ranked.slice(0, 6).map(function (item, idx) {
+      var pct = Math.max(8, Math.round((item.total / maxTotal) * 100));
+      var active = state.filters.responsavel && normalizeText(state.filters.responsavel) === normalizeText(item.name);
+      var barCls = (idx === 0 ? 'bar-fill-brand' : 'bar-fill-main') + (doAnim ? ' bar-anim-x' : '');
+      var rankNum = String(idx + 1).padStart(2, '0');
+      return (
+        '<button type="button" class="rank-row' + (active ? ' is-active-filter' : '') + '" data-chart-resp="' + escapeHtml(item.name) + '">' +
+          '<div class="rank-row-head">' +
+            '<div class="rank-person">' +
+              '<span class="rank-ordinal">' + rankNum + '</span>' +
+              '<span class="avatar-chip' + (idx === 0 ? ' top-leader' : '') + '">' + escapeHtml(getInitials(item.name)) + '</span>' +
+              '<span class="rank-name">' + escapeHtml(item.name) + '</span>' +
+              (idx === 0 ? '<span class="rank-crown">Maior carga</span>' : '') +
+            '</div>' +
+            '<span class="rank-counts">' + item.total + '<small>(' + item.pending + ' pend.)</small></span>' +
+          '</div>' +
+          '<div class="bar-track"><div class="' + barCls + '" style="width:' + pct + '%;--bar-delay:' + (idx * 65) + 'ms"></div></div>' +
+        '</button>'
+      );
+    }).join('');
+  }
+
+  function renderProtocoloDonut(records, animate) {
+    if (!els.chartProtocolo) return;
+    var doAnim = Boolean(animate) && !prefersReducedMotion();
+    var sim = 0;
+    var nao = 0;
+    var outros = 0;
+    for (var i = 0; i < records.length; i++) {
+      if (isProtocoladoSim(records[i].protocolado)) sim++;
+      else if (isProtocoladoNao(records[i].protocolado)) nao++;
+      else outros++;
+    }
+    var total = Math.max(records.length, 1);
+    var pctSim = Math.round((sim / total) * 100);
+    var r = 52;
+    var circ = 2 * Math.PI * r;
+    var dashSim = (sim / total) * circ;
+    var dashNao = (nao / total) * circ;
+
+    var activeSim = normalizeText(state.filters.protocolado) === 'sim';
+    var activeNao = normalizeText(state.filters.protocolado) === 'nao';
+
+    els.chartProtocolo.innerHTML =
+      '<div class="donut-wrap">' +
+        '<svg class="' + (doAnim ? 'donut-svg-anim' : '') + '" width="138" height="138" viewBox="0 0 138 138">' +
+          '<defs>' +
+            '<filter id="donutNeonGlow" x="-20%" y="-20%" width="140%" height="140%">' +
+              '<feGaussianBlur in="SourceGraphic" stdDeviation="2.4" result="b" />' +
+              '<feComponentTransfer in="b" result="c"><feFuncA type="linear" slope="0.55" /></feComponentTransfer>' +
+              '<feMerge><feMergeNode in="c" /><feMergeNode in="SourceGraphic" /></feMerge>' +
+            '</filter>' +
+          '</defs>' +
+          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#efeae2" stroke-width="14" />' +
+          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#c0a68d" filter="url(#donutNeonGlow)" stroke-width="14" stroke-dasharray="' + dashNao.toFixed(1) + ' ' + circ.toFixed(1) + '" stroke-dashoffset="' + (-dashSim).toFixed(1) + '" transform="rotate(-90 69 69)" />' +
+          '<circle cx="69" cy="69" r="' + r + '" fill="none" stroke="#0e0e10" stroke-width="14" stroke-dasharray="' + dashSim.toFixed(1) + ' ' + circ.toFixed(1) + '" transform="rotate(-90 69 69)" />' +
+        '</svg>' +
+        '<div class="donut-center">' +
+          '<span id="donutPctValue" class="donut-pct">' + pctSim + '%</span>' +
+          '<span class="donut-pct-label">Protocolado</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="donut-legend">' +
+        '<button type="button" class="legend-btn' + (activeSim ? ' is-active-filter' : '') + '" data-chart-proto="Sim">' +
+          '<span class="legend-btn-left"><i class="legend-dot" style="background:#0e0e10"></i>Protocolado (Sim)</span>' +
+          '<span class="legend-btn-val">' + sim + '</span>' +
+        '</button>' +
+        '<button type="button" class="legend-btn' + (activeNao ? ' is-active-filter' : '') + '" data-chart-proto="Não">' +
+          '<span class="legend-btn-left"><i class="legend-dot" style="background:#c0a68d; box-shadow:0 0 8px rgba(192,166,141,0.7)"></i>Pendente (Não)</span>' +
+          '<span class="legend-btn-val">' + nao + '</span>' +
+        '</button>' +
+        (outros > 0
+          ? '<div style="font-size:11.5px; color:var(--text-muted); padding:0 4px;">Sem marcação: <strong>' + outros + '</strong></div>'
+          : '') +
+      '</div>';
+
+    var pctEl = document.getElementById('donutPctValue');
+    if (doAnim && pctEl) {
+      var fromPct = !state.hasAnimatedInitial ? 0 : state.prevKpis.protoPct;
+      animateNumber(pctEl, pctSim, fromPct, '%', 720);
+    }
+    state.prevKpis.protoPct = pctSim;
+  }
+
+  function renderPrioridadesChart(records, animate) {
+    if (!els.chartPrioridades) return;
+    var doAnim = Boolean(animate) && !prefersReducedMotion();
+    var counts = {};
+    for (var i = 0; i < records.length; i++) {
+      var p = String(records[i].priorizacao || '').trim() || 'Sem classificação';
+      counts[p] = (counts[p] || 0) + 1;
+    }
+    var list = Object.keys(counts).map(function (k) {
+      return { name: k, total: counts[k], rank: PRIORITY_RANK[normalizeText(k)] || 50 };
+    }).sort(function (a, b) {
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      return b.total - a.total;
+    });
+
+    var maxVal = Math.max.apply(null, list.map(function (x) { return x.total; }).concat([1]));
+    els.chartPrioridades.innerHTML = list.slice(0, 5).map(function (item, idx) {
+      var pct = Math.max(8, Math.round((item.total / maxVal) * 100));
+      var n = normalizeText(item.name);
+      var fillCls = (n === 'urgente' ? 'bar-fill-danger' : (n === 'alta' ? 'bar-fill-main' : 'bar-fill-brand')) + (doAnim ? ' bar-anim-x' : '');
+      var active = state.filters.priorizacao && normalizeText(state.filters.priorizacao) === n;
+      return (
+        '<button type="button" class="mini-bar-btn' + (active ? ' is-active-filter' : '') + '" data-chart-prio="' + escapeHtml(item.name) + '">' +
+          '<div class="mini-bar-top"><span>' + escapeHtml(item.name) + '</span><span>' + item.total + '</span></div>' +
+          '<div class="bar-track"><div class="' + fillCls + '" style="width:' + pct + '%;--bar-delay:' + (idx * 65) + 'ms"></div></div>' +
+        '</button>'
+      );
+    }).join('');
+  }
+
+  function renderTribunaisChart(records, animate) {
+    if (!els.chartTribunais) return;
+    var doAnim = Boolean(animate) && !prefersReducedMotion();
+    var counts = {};
+    for (var i = 0; i < records.length; i++) {
+      var t = String(records[i].tribunal || '').trim() || 'Não informado';
+      counts[t] = (counts[t] || 0) + 1;
+    }
+    var list = Object.keys(counts).map(function (k) {
+      return { name: k, total: counts[k] };
+    }).sort(function (a, b) {
+      if (b.total !== a.total) return b.total - a.total;
+      return a.name.localeCompare(b.name, 'pt-BR');
+    });
+
+    var maxVal = Math.max.apply(null, list.map(function (x) { return x.total; }).concat([1]));
+    els.chartTribunais.innerHTML = list.slice(0, 5).map(function (item, idx) {
+      var pct = Math.max(10, Math.round((item.total / maxVal) * 100));
+      var active = state.filters.tribunal && normalizeText(state.filters.tribunal) === normalizeText(item.name);
+      var fillCls = (idx === 0 ? 'bar-fill-brand' : 'bar-fill-main') + (doAnim ? ' bar-anim-x' : '');
+      return (
+        '<button type="button" class="mini-bar-btn' + (active ? ' is-active-filter' : '') + '" data-chart-tribunal="' + escapeHtml(item.name) + '">' +
+          '<div class="mini-bar-top"><span>' + escapeHtml(item.name) + '</span><span>' + item.total + '</span></div>' +
+          '<div class="bar-track"><div class="' + fillCls + '" style="width:' + pct + '%;--bar-delay:' + (idx * 65) + 'ms"></div></div>' +
+        '</button>'
+      );
+    }).join('');
+  }
+
+  function renderAnalytics(refIso, animate) {
+    if (!state.showAnalytics) return;
+    renderTimelineChart(state.records, refIso, animate);
+    renderResponsaveisChart(state.records, animate);
+    renderProtocoloDonut(state.records, animate);
+    renderPrioridadesChart(state.records, animate);
+    renderTribunaisChart(state.records, animate);
   }
 
   /* -------------------- Modal de Detalhe, Edição, Confirmação e Conflito -------------------- */
@@ -761,6 +1368,27 @@
             state.records.push(saved);
           }
 
+          state.animateChartsNext = true;
+          populateAllFilterSelects();
+
+          if (creating) {
+            state.lastCreatedId = saved.id;
+            state.lastCreatedUntil = Date.now() + 9000;
+            var refIsoNow = state.referenceDateIso || state.meta.todayIso;
+            if (!classifyForDate(saved, refIsoNow).inAttentionView) {
+              state.scope = 'all';
+            }
+            closeRecordModal();
+            renderAgenda();
+            loadAgendaData({ silent: true });
+            showToast('Novo processo incluído e confirmado na planilha (' + saved.numeroProcesso + ').', 'success');
+            var newRowEl = els.agendaTableBody.querySelector('tr[data-record-key="' + CSS.escape(recordKey(saved)) + '"]');
+            if (newRowEl) {
+              newRowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            return;
+          }
+
           renderAgenda();
           openRecordModal(recordKey(saved));
           loadAgendaData({ silent: true });
@@ -801,8 +1429,8 @@
           '<li>Responsável: <strong>' + escapeHtml(cur.responsavel || '(vazio)') + '</strong></li>' +
           '<li>Priorização: <strong>' + escapeHtml(cur.priorizacao || '(vazio)') + '</strong></li>' +
           '<li>Protocolado: <strong>' + escapeHtml(cur.protocolado || '(vazio)') + '</strong></li>' +
-          '<li>Observação (M): <strong>' + escapeHtml(cur.observacaoM || '(vazio)') + '</strong></li>' +
-          '<li>Observação (P): <strong>' + escapeHtml(cur.observacaoP || '(vazio)') + '</strong></li>' +
+          '<li>Observação da Controladoria: <strong>' + escapeHtml(cur.observacaoM || '(vazio)') + '</strong></li>' +
+          '<li>Observação do Advogado: <strong>' + escapeHtml(cur.observacaoP || '(vazio)') + '</strong></li>' +
         '</ul>';
     } else {
       els.conflictDetails.innerHTML = '';
@@ -956,6 +1584,100 @@
       renderAgenda();
     });
 
+    // Navegação da barra lateral e controle de gráficos
+    if (els.navDashboard) {
+      els.navDashboard.addEventListener('click', function () {
+        state.showAnalytics = true;
+        renderAgenda();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
+    if (els.navAttention) {
+      els.navAttention.addEventListener('click', function () {
+        state.showAnalytics = false;
+        state.scope = 'attention';
+        renderAgenda();
+        if (els.docketAnchor) els.docketAnchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+    if (els.navAll) {
+      els.navAll.addEventListener('click', function () {
+        state.showAnalytics = false;
+        state.scope = 'all';
+        renderAgenda();
+        if (els.docketAnchor) els.docketAnchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+    if (els.btnToggleAnalytics) {
+      els.btnToggleAnalytics.addEventListener('click', function () {
+        state.showAnalytics = !state.showAnalytics;
+        renderAgenda();
+      });
+    }
+
+    // Alternador de modo do gráfico temporal (Prazos por dia vs Entradas/Atualizações)
+    document.querySelectorAll('[data-timeline-mode]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        state.timelineMode = btn.getAttribute('data-timeline-mode') || 'prazos';
+        document.querySelectorAll('[data-timeline-mode]').forEach(function (b) {
+          b.classList.toggle('active', b === btn);
+        });
+        renderTimelineChart(state.records, state.referenceDateIso || state.meta.todayIso, true);
+      });
+    });
+
+    // Clique interativo nos gráficos para filtrar a carteira
+    if (els.analyticsSection) {
+      els.analyticsSection.addEventListener('click', function (e) {
+        var dateBar = e.target.closest('[data-chart-date]');
+        if (dateBar) {
+          var targetDate = dateBar.getAttribute('data-chart-date');
+          if (targetDate) {
+            state.referenceDateIso = targetDate;
+            state.scope = 'attention';
+            renderAgenda();
+            showToast('Data consultada alterada para ' + formatShortBr(targetDate) + '.', 'info');
+          }
+          return;
+        }
+        var respBtn = e.target.closest('[data-chart-resp]');
+        if (respBtn) {
+          var resp = respBtn.getAttribute('data-chart-resp');
+          state.filters.responsavel = normalizeText(state.filters.responsavel) === normalizeText(resp) ? '' : resp;
+          state.scope = 'all';
+          populateAllFilterSelects();
+          renderAgenda();
+          return;
+        }
+        var protoBtn = e.target.closest('[data-chart-proto]');
+        if (protoBtn) {
+          var proto = protoBtn.getAttribute('data-chart-proto');
+          state.filters.protocolado = normalizeText(state.filters.protocolado) === normalizeText(proto) ? '' : proto;
+          state.scope = 'all';
+          populateAllFilterSelects();
+          renderAgenda();
+          return;
+        }
+        var prioBtn = e.target.closest('[data-chart-prio]');
+        if (prioBtn) {
+          var prio = prioBtn.getAttribute('data-chart-prio');
+          state.filters.priorizacao = normalizeText(state.filters.priorizacao) === normalizeText(prio) ? '' : prio;
+          state.scope = 'all';
+          populateAllFilterSelects();
+          renderAgenda();
+          return;
+        }
+        var tribBtn = e.target.closest('[data-chart-tribunal]');
+        if (tribBtn) {
+          var trib = tribBtn.getAttribute('data-chart-tribunal');
+          state.filters.tribunal = normalizeText(state.filters.tribunal) === normalizeText(trib) ? '' : trib;
+          state.scope = 'all';
+          populateAllFilterSelects();
+          renderAgenda();
+        }
+      });
+    }
+
     els.searchInput.addEventListener('input', function (e) {
       state.filters.search = e.target.value || '';
       renderAgenda();
@@ -993,6 +1715,54 @@
       var row = e.target.closest('tr[data-record-key]');
       var key = (btn && btn.getAttribute('data-open-key')) || (row && row.getAttribute('data-record-key'));
       if (!key) return;
+      var toggleProtBtn = e.target.closest('[data-toggle-protocolado]');
+      if (toggleProtBtn && state.userAccess.canEdit) {
+        if (toggleProtBtn.disabled || state.isSaving) return;
+        var targetRec = state.records.find(function (r) { return recordKey(r) === key; });
+        if (!targetRec) return;
+        var nextProtVal = toggleProtBtn.getAttribute('data-toggle-protocolado');
+        toggleProtBtn.disabled = true;
+        toggleProtBtn.classList.add('is-saving');
+        state.isSaving = true;
+
+        callServer('apiSaveRecord', {
+          recordId: targetRec.id,
+          tempRowKey: targetRec.tempRowKey,
+          expectedVersion: targetRec.version,
+          changes: { protocolado: nextProtVal }
+        }).then(function (res) {
+          state.isSaving = false;
+          if (res && res.ok && res.record) {
+            var saved = res.record;
+            for (var idx = 0; idx < state.records.length; idx++) {
+              var cur = state.records[idx];
+              if ((saved.id && cur.id === saved.id) || (targetRec.tempRowKey && cur.tempRowKey === targetRec.tempRowKey)) {
+                state.records[idx] = saved;
+                break;
+              }
+            }
+            state.animateChartsNext = true;
+            renderAgenda();
+            loadAgendaData({ silent: true });
+            showToast('Protocolado atualizado para "' + nextProtVal + '" (' + (saved.numeroProcesso || 'registro') + ').', 'success');
+            return;
+          }
+          toggleProtBtn.disabled = false;
+          toggleProtBtn.classList.remove('is-saving');
+          if (res && res.code === 'CONFLICT') {
+            openRecordModal(key);
+            showConflictState(res);
+            return;
+          }
+          showToast((res && res.message) || 'Não foi possível atualizar o campo Protocolado.', 'error');
+        }).catch(function (err) {
+          state.isSaving = false;
+          toggleProtBtn.disabled = false;
+          toggleProtBtn.classList.remove('is-saving');
+          showToast(err.message || 'Erro ao atualizar Protocolado.', 'error');
+        });
+        return;
+      }
       var cell = e.target.closest('.col-passos');
       if (cell && state.userAccess.canEdit) {
         if (e.target.closest('[data-steps]')) {

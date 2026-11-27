@@ -14,7 +14,7 @@ if (process.env.GITHUB_ACTIONS && (!config.clientId || !config.deploymentId)) {
   throw new Error('Configure GOOGLE_CLIENT_ID e APPS_SCRIPT_DEPLOYMENT_ID nas variáveis do repositório.');
 }
 const head = `<meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0f1f38">
+  <meta name="theme-color" content="#111111">
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icon-192.png">
   <script async src="https://accounts.google.com/gsi/client"></script>
